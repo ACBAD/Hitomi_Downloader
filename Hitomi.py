@@ -1,7 +1,11 @@
 import hashlib
+import json
+import os
+import re
 import struct
 import time
 import urllib.parse
+import zipfile
 
 import requests
 
@@ -17,7 +21,7 @@ nozomiurl_index_dir = 'nozomiurlindex'
 
 
 class Hitomi:
-    def __init__(self):
+    def __init__(self, storage_path_fmt=None):
         self.index_versions = {
             'init': False,
             index_dir: '',
@@ -25,21 +29,70 @@ class Hitomi:
             languages_index_dir: '',
             nozomiurl_index_dir: ''
         }
+        if storage_path_fmt is None:
+            self.storage_path = os.curdir
+            print(f'下载路径未配置，默认采用当前工作路径:{self.storage_path}')
+        elif not os.path.exists(storage_path_fmt):
+            print('配置的下载路径不存在，创建')
+            os.mkdir(self.storage_path)
         print('搜索模块初始化')
         self.refresh_version()
         print('搜索模块初始化完成')
+        self.gg_list = []
+        self.fucking_b = ''
+        self.fucking_o = None
+        print('下载模块初始化')
+        self.set_gg()
+        print('下载模块初始化完成')
 
     @staticmethod
-    def get_index_version(name):
-        url = f'http://{domain}/{name}/version?_={int(time.time() * 1000)}'
-        response = requests.get(url)
-        return response.text
+    def get_gallery_info(gallery_id):
+        req_url = f'https://ltn.hitomi.la/galleries/{gallery_id}.js'
+        response = requests.get(req_url)
+        if response.status_code != 200:
+            raise ValueError(f"Error getting gallery info: {response.status_code}")
+        else:
+            # 使用正则表达式匹配 galleryinfo 变量的 JSON 对象
+            if 'galleryinfo' not in response.text:
+                print(response.text)
+                raise ValueError("galleryinfo not found")
+            match = re.search(r'{.*', response.text, re.DOTALL)
+            # 提取匹配的 JSON 字符串
+            json_str = match.group(0)
+            # 解析 JSON 字符串为 Python 字典
+            try:
+                galleryinfo_dict = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Error decoding JSON: {e}")
+            return galleryinfo_dict
+
+    def set_gg(self, add_timestamp=False):
+        if add_timestamp:
+            gg_url = f'https://ltn.hitomi.la/gg.js?_={int(time.time() * 1000)}'
+        else:
+            gg_url = 'https://ltn.hitomi.la/gg.js?'
+        gg_resp = requests.get(gg_url).text.split('\n')
+        gg_dict = {'gg_list': [], 'fucking_b': '', 'fucking_o': None}
+        for line in gg_resp:
+            if line.startswith('case'):
+                gg_dict['gg_list'].append(int(line[5:][:-1]))
+            elif line.startswith('b:'):
+                gg_dict['fucking_b'] = str(line[4:][:-1])
+            elif line.startswith('o = 1'):
+                gg_dict['fucking_o'] = True
+            elif line.startswith('o = 0'):
+                gg_dict['fucking_o'] = False
+        self.gg_list = gg_dict['gg_list']
+        self.fucking_b = gg_dict['fucking_b']
+        self.fucking_o = gg_dict['fucking_o']
 
     def refresh_version(self):
         for version_name, version in self.index_versions.items():
             _ = 0
             for _ in range(10):
-                version = self.get_index_version(version_name)
+                url = f'http://{domain}/{version_name}/version?_={int(time.time() * 1000)}'
+                response = requests.get(url)
+                version = response.text
                 if not version:
                     print(f'{version_name} failed', _)
                     time.sleep(1)
@@ -49,6 +102,50 @@ class Hitomi:
             if version == '':
                 raise ConnectionError(f'{version_name} failed totally')
         self.index_versions['init'] = True
+
+    def url_from_url(self, url, base):
+        def subdomain_from_url(inner_url, inner_base):
+            if not self.gg_list or self.fucking_o is None:
+                raise ValueError('反爬虫破解未配置')
+
+            def decide_gg(inner_g):
+                if inner_g in self.gg_list:
+                    return 1 if self.fucking_o else 0
+                return 0 if self.fucking_o else 1
+
+            retval = 'b'
+            if inner_base:
+                retval = inner_base
+            b = 16
+            match = re.search(r'/[0-9a-f]{61}([0-9a-f]{2})([0-9a-f])', inner_url)
+            if not match:
+                return 'a'
+            m1, m2 = match.group(1), match.group(2)
+            g = int(m2 + m1, b)
+            return chr(97 + decide_gg(g)) + retval
+
+        return re.sub(r'//..?\.hitomi\.la/', f'//{subdomain_from_url(url, base)}.hitomi.la/', url)
+
+    def get_download_urls(self, info):
+        def url_from_hash(galleryid, image, inner_dir=None, ext=None):
+            ext = ext or inner_dir or image['name'].split('.').pop()
+            inner_dir = inner_dir or 'images'
+            if self.fucking_b == 0:
+                raise ValueError('Invalid fucking_b')
+
+            def gg_s(h):
+                m = re.search(r'(..)(.)$', h)
+                if m:
+                    return str(int(m.group(2) + m.group(1), 16))
+                return ''
+
+            return f'https://a.hitomi.la/{inner_dir}/{self.fucking_b}{gg_s(image["hash"])}/{image["hash"]}.{ext}'
+
+        download_urls = {}
+        for file in info['files']:
+            image_name = re.sub(r'\.[^.]+$', '.webp', file['name'])
+            download_urls[image_name] = self.url_from_url(url_from_hash(info['id'], file, 'webp', None), 'a')
+        return download_urls
 
     @staticmethod
     def get_url_at_range(url, inner_range):
@@ -249,6 +346,58 @@ class Hitomi:
         }
         return self.get_galleryids_for_query(terms[0], inner_state)
 
+    def download(self, gellary_id):
+        download_path = self.storage_path
+        downloaded_files_path = []
+        if not os.path.exists('temp'):
+            os.makedirs('temp')
+        gallery_info = self.get_gallery_info(gellary_id)
+        urls = self.get_download_urls(gallery_info)
+        headers = {
+            'referer': 'https://hitomi.la' + urllib.parse.quote(gallery_info['galleryurl'])
+        }
+
+        def download_file(url):
+            for name, url in urls.items():
+                with open(f"temp/{name}", 'wb') as f:
+                    print(f'downloading {name}')
+                    repsone = requests.get(url, headers=headers)
+                    if repsone.status_code != 200:
+                        if repsone.status_code == 404 or repsone.status_code == 403:
+                            raise NotImplementedError('反爬虫配置可能已失效')
+                    f.write(repsone.content)
+                    downloaded_files_path.append(f"temp/{name}")
+
+        try:
+            download_file(urls)
+            print('下载完成')
+        except NotImplementedError:
+            print('反爬配置失效，正在重新配置')
+            downloaded_files_path = []
+            self.set_gg()
+            try:
+                download_file(urls)
+            except NotImplementedError:
+                raise ValueError('爬虫失效')
+
+        def clean_filename(filename):
+            # 定义不允许的字符
+            illegal_chars = {'\\', '/', ':', '*', '?', '"', '<', '>', '|'}
+            # 替换不允许的字符为空格
+            cleaned_filename = ''.join(c if c not in illegal_chars else ' ' for c in filename)
+            # 去除连续空格并去除首尾空格
+            cleaned_filename = ' '.join(cleaned_filename.split())
+            return cleaned_filename
+
+        with zipfile.ZipFile(os.path.join(download_path, 'temp.zip'), 'w') as zipf:
+            for file_path in downloaded_files_path:
+                zipf.write(file_path, arcname=os.path.basename(file_path))
+        for img in os.listdir('temp'):
+            img_path = os.path.join('temp', img)
+            os.remove(img_path)
+        os.rename(os.path.join(download_path, 'temp.zip'), os.path.join(download_path, clean_filename(gallery_info['title']) + '.zip'))
+        print('压缩完成')
+
 
 dler = Hitomi()
-print(dler.process_query('mountainhan'))
+dler.download(2859991)
