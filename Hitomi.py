@@ -416,6 +416,7 @@ class Hitomi:
 
 proxy = {
     'http': 'http://127.0.0.1:10809',
+    'https': 'http://127.0.0.1:10809'
 }
 dler = Hitomi(proxy_fmt=proxy)
 results = dler.process_query('玉之けだま')
