@@ -1,8 +1,11 @@
+import asyncio
+import json
+
+import aioconsole
 import zmq
+
 from Hitomi import Hitomi
 from setup_logger import setup
-import asyncio
-import aioconsole
 
 zmq_context = zmq.Context()
 zmq_socket = zmq_context.socket(zmq.REP)
@@ -29,21 +32,41 @@ async def zmq_server():
             }
             if req['type'] == 'search':
                 query_str = req['query_str']
-                results = await asyncio.to_thread(hitomi.process_query(query_str))
+                results = []
+                try:
+                    results = await asyncio.to_thread(hitomi.process_query(query_str))
+                except ValueError as e:
+                    logger.error(f'反爬虫配置失效，搜索失败{e}')
+                except NotImplementedError as e:
+                    logger.error(f'反爬虫配置失效，搜索失败{e}')
+                except ConnectionError as e:
+                    logger.error(f'网络链接失效，搜索失败{e}')
+                except Exception as e:
+                    logger.error(f'其他异常，搜索失败{e}')
                 if results:
-                    response['result'] = results[:10]
+                    response['result'] = json.dumps(results[:10])
                 else:
                     response['status'] = 'failed'
             elif req['type'] == 'download':
                 gallery_id = req['gallery_id']
-                filename = await asyncio.to_thread(hitomi.download(gallery_id))
+                filename = ''
+                try:
+                    filename = await asyncio.to_thread(hitomi.download(gallery_id))
+                except ValueError as e:
+                    logger.error(f'反爬虫配置失效，下载失败{e}')
+                except NotImplementedError as e:
+                    logger.error(f'反爬虫配置失效，下载失败{e}')
+                except ConnectionError as e:
+                    logger.error(f'网络链接失效，下载失败{e}')
+                except Exception as e:
+                    logger.error(f'其他异常，下载失败{e}')
                 if filename:
                     response['result'] = filename
                 else:
                     response['status'] = 'failed'
-                    response['result'] = 'gallery not found'
+                    response['result'] = 'gallery not found or server error'
             zmq_socket.send_json(response)
-    except zmq.ZMQError as e:
+    except zmq.ZMQError:
         zmq_socket.close()
         zmq_context.term()
         logger.warning('shutdown')
