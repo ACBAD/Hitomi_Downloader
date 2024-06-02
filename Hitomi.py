@@ -6,7 +6,6 @@ import struct
 import time
 import urllib.parse
 import zipfile
-
 import requests
 
 domain = 'ltn.hitomi.la'
@@ -273,7 +272,7 @@ class Hitomi:
         subnode = self.get_node_at_address(field, subnode_address)
         return self.b_search(field, key, subnode)
 
-    def get_galleryids_for_query(self, inner_query, inner_state):
+    def get_galleryids_for_query(self, inner_query, inner_state, origin_result=False):
         def get_galleryids_from_data(inner_data):
             if not inner_data:
                 return []
@@ -346,9 +345,12 @@ class Hitomi:
         positive_result = get_galleryids_from_data(data)
         print(f'正向搜索结果数{len(positive_result)}')
         filted_result = [gallery for gallery in initial_result if gallery in positive_result]
-        return filted_result
+        if origin_result:
+            return positive_result
+        else:
+            return filted_result
 
-    def process_query(self, query_string):
+    def process_query(self, query_string, origin_result=False):
         terms = urllib.parse.unquote(query_string).lower().strip().split()
         inner_state = {
             'area': 'all',
@@ -358,7 +360,7 @@ class Hitomi:
             'orderbykey': 'added',
             'orderbydirection': 'desc'
         }
-        return self.get_galleryids_for_query(terms[0], inner_state)
+        return self.get_galleryids_for_query(terms[0], inner_state, origin_result)
 
     def download(self, gellary_id):
         download_path = self.storage_path
@@ -419,7 +421,7 @@ proxy = {
     'https': 'http://127.0.0.1:10809'
 }
 dler = Hitomi(proxy_fmt=proxy)
-results = dler.process_query('玉之けだま')
+results = dler.process_query('玉之けだま', origin_result=True)
 if not results:
     print('无结果')
 else:
