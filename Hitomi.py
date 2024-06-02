@@ -7,6 +7,9 @@ import time
 import urllib.parse
 import zipfile
 import requests
+from setup_logger import setup
+
+logger = setup('Hitomi')
 
 domain = 'ltn.hitomi.la'
 galleryblockextension = '.html'
@@ -21,6 +24,7 @@ nozomiurl_index_dir = 'nozomiurlindex'
 
 class Hitomi:
     def __init__(self, storage_path_fmt=None, proxy_fmt=None, debug_fmt=False):
+        logger.warning('Hitomi init called')
         self.index_versions = {
             index_dir: '',
             galleries_index_dir: '',
@@ -28,23 +32,26 @@ class Hitomi:
             nozomiurl_index_dir: ''
         }
         self.debug = debug_fmt
+        if self.debug:
+            logger.handlers[0].setLevel('DEBUG')
         self.init = False
         self.proxy = proxy_fmt
         if storage_path_fmt is None:
             self.storage_path = os.curdir
-            print(f'下载路径未配置，默认采用当前工作路径:{self.storage_path}')
+            logger.warning(f'下载路径未配置，默认采用当前工作路径:{self.storage_path}')
         elif not os.path.exists(storage_path_fmt):
-            print('配置的下载路径不存在，创建')
+            logger.warning('配置的下载路径不存在，创建')
             os.mkdir(self.storage_path)
-        print('搜索模块初始化')
+        logger.info('搜索模块初始化')
         self.refresh_version()
-        print('搜索模块初始化完成')
+        logger.info('搜索模块初始化完成')
         self.gg_list = []
         self.fucking_b = ''
         self.fucking_o = None
-        print('下载模块初始化')
+        logger.info('下载模块初始化')
         self.set_gg()
-        print('下载模块初始化完成')
+        logger.info('下载模块初始化完成')
+        logger.warning('启动完成')
 
     def get_gallery_info(self, gallery_id):
         req_url = f'https://ltn.hitomi.la/galleries/{gallery_id}.js'
@@ -54,7 +61,7 @@ class Hitomi:
         else:
             # 使用正则表达式匹配 galleryinfo 变量的 JSON 对象
             if 'galleryinfo' not in response.text:
-                print(response.text)
+                logger.error(response.text)
                 raise ValueError("galleryinfo not found")
             match = re.search(r'{.*', response.text, re.DOTALL)
             # 提取匹配的 JSON 字符串
@@ -94,10 +101,10 @@ class Hitomi:
                 response = requests.get(url, proxies=self.proxy)
                 version = response.text
                 if not version:
-                    print(f'{version_name} failed', _)
+                    logger.warning(f'refresh_versions: getting {version_name} failed, now:{_}')
                     time.sleep(1)
                 else:
-                    print(f'{version_name}:{version}')
+                    logger.debug(f'{version_name}:{version}')
                     self.index_versions[version_name] = version
                     break
             if version == '':
@@ -113,6 +120,7 @@ class Hitomi:
                 if inner_g in self.gg_list:
                     return 1 if self.fucking_o else 0
                 return 0 if self.fucking_o else 1
+
             retval = 'b'
             if inner_base:
                 retval = inner_base
@@ -123,6 +131,7 @@ class Hitomi:
             m1, m2 = match.group(1), match.group(2)
             g = int(m2 + m1, b)
             return chr(97 + decide_gg(g)) + retval
+
         return re.sub(r'//..?\.hitomi\.la/', f'//{subdomain_from_url(url, base)}.hitomi.la/', url)
 
     def get_download_urls(self, info):
@@ -147,23 +156,20 @@ class Hitomi:
         return download_urls
 
     def get_url_at_range(self, url, inner_range):
-        debug = self.debug
-        if debug:
-            print(inner_range)
+        logger.debug(inner_range)
         for _ in range(10):
             headers = {
                 'Range': f'bytes={inner_range[0]}-{inner_range[1]}'
             }
-            time.sleep(0.5)
             response = requests.get(url, headers=headers, proxies=self.proxy)
             if response.status_code == 200 or response.status_code == 206:
-                if debug:
+                if self.debug:
                     with open(f'{inner_range[0]}-{inner_range[1]}', 'wb') as f:
                         f.write(response.content)
                 return response.content
             elif response.status_code == 503:
-                print('503 ', _)
-                time.sleep(3)
+                logger.warning(f'503 error in getting indexes, now:{_}')
+                time.sleep(2)
             else:
                 raise Exception(
                     f"get_url_at_range({url}, {inner_range}) failed, response.status_code: {response.status_code}")
@@ -226,7 +232,7 @@ class Hitomi:
         return decode_node(nodedata)
 
     def b_search(self, field, key, node):
-        print('b树搜索')
+        logger.debug('b树搜索')
 
         def compare_arraybuffers(dv1, dv2):
             top = min(len(dv1), len(dv2))
@@ -244,11 +250,10 @@ class Hitomi:
             for i in range(len(inner_node['keys'])):
                 cmp_result = compare_arraybuffers(inner_key, inner_node['keys'][i])
                 if cmp_result <= 0:
-                    if self.debug:
-                        print(inner_key, inner_node)
+                    logger.debug(inner_key, inner_node)
                     flag = False
                     break
-            return [cmp_result == 0, i+1 if flag else i]
+            return [cmp_result == 0, i + 1 if flag else i]
 
         def is_leaf(inner_node):
             return all(addr == 0 for addr in inner_node['subnode_addresses'])
@@ -264,11 +269,9 @@ class Hitomi:
             raise NotImplementedError('index_versions已过期')
         if node['subnode_addresses'][where] == 0:
             raise NotImplementedError('index_versions已过期')
-        if self.debug:
-            print(f'subnode_addresses: {node["subnode_addresses"]}')
+        logger.debug(f'subnode_addresses: {node["subnode_addresses"]}')
         subnode_address = node['subnode_addresses'][where]
-        if self.debug:
-            print(f'where:{where}, subnode_address:{subnode_address}')
+        logger.debug(f'where:{where}, subnode_address:{subnode_address}')
         subnode = self.get_node_at_address(field, subnode_address)
         return self.b_search(field, key, subnode)
 
@@ -279,7 +282,7 @@ class Hitomi:
             url = f'http://{domain}/{galleries_index_dir}/galleries.{self.index_versions[galleries_index_dir]}.data'
             offset, length = inner_data
             if length > 100000000 or length <= 0:
-                print(f"length {length} is too long")
+                logger.error(f"results length {length} is too long")
                 return []
             inbuf = self.get_url_at_range(url, [offset, offset + length - 1])
             if not inbuf:
@@ -290,10 +293,10 @@ class Hitomi:
             pos += 4
             expected_length = number_of_galleryids * 4 + 4
             if number_of_galleryids > 10000000 or number_of_galleryids <= 0:
-                print(f"number_of_galleryids {number_of_galleryids} is too long")
+                logger.error(f"number_of_galleryids {number_of_galleryids} is too long")
                 return []
             elif len(inbuf) != expected_length:
-                print(f"inbuf.byteLength {len(inbuf)} !== expected_length {expected_length}")
+                logger.error(f"inbuf.byteLength {len(inbuf)} !== expected_length {expected_length}")
                 return []
             for _ in range(number_of_galleryids):
                 galleryid = struct.unpack_from('>I', inbuf, pos)[0]  # big-endian int32
@@ -322,36 +325,35 @@ class Hitomi:
                     nozomi.append(struct.unpack('>I', array_buffer[i * 4:(i + 1) * 4])[0])
             return nozomi
 
-        initial_result = get_galleryids_from_nozomi(inner_state)
-        print(f'初始搜索结果数{len(initial_result)}')
         key = hashlib.sha256(inner_query.encode()).digest()[:4]
         field = 'galleries'
         node = self.get_node_at_address(field, 0)
         if not node:
-            print('not node')
+            logger.error('not node')
             return []
         try:
             data = self.b_search(field, key, node)
         except NotImplementedError:
-            print('index_version过期，尝试刷新')
+            logger.warning('index_version过期，尝试刷新')
             self.refresh_version()
             try:
                 data = self.b_search(field, key, node)
             except NotImplementedError:
                 raise ValueError(f'B树搜索出错,{self.index_versions[galleries_index_dir]}')
         if not data:
-            print('not data')
+            logger.error('not data')
             return []
         positive_result = get_galleryids_from_data(data)
-        print(f'正向搜索结果数{len(positive_result)}')
-        filted_result = [gallery for gallery in initial_result if gallery in positive_result]
-        if origin_result:
-            return positive_result
-        else:
+        logger.info(f'正向搜索结果数{len(positive_result)}')
+        if not origin_result:
+            initial_result = get_galleryids_from_nozomi(inner_state)
+            logger.info(f'偏好过滤结果数{len(initial_result)}')
+            filted_result = [gallery for gallery in initial_result if gallery in positive_result]
             return filted_result
+        return positive_result
 
     def process_query(self, query_string, origin_result=False):
-        terms = urllib.parse.unquote(query_string).lower().strip().split()
+        terms = urllib.parse.unquote(query_string).lower().strip()
         inner_state = {
             'area': 'all',
             'tag': 'index',
@@ -374,21 +376,25 @@ class Hitomi:
         }
 
         def download_file(inner_urls):
+            total_num = len(inner_urls)
+            now_num = 0
             for name, url in inner_urls.items():
                 with open(f"temp/{name}", 'wb') as f:
-                    print(f'downloading {name}')
+                    logger.debug(f'downloading {name}')
+                    logger.info(f'Prograssing {now_num/total_num * 100:.2f}%')
                     repsone = requests.get(url, headers=headers, proxies=self.proxy)
                     if repsone.status_code != 200:
                         if repsone.status_code == 404 or repsone.status_code == 403:
                             raise NotImplementedError('反爬虫配置可能已失效')
                     f.write(repsone.content)
                     downloaded_files_path.append(f"temp/{name}")
+                now_num += 1
 
         try:
             download_file(urls)
-            print('下载完成')
+            logger.warning('下载完成')
         except NotImplementedError:
-            print('反爬配置失效，正在重新配置')
+            logger.warning('反爬配置失效，正在重新配置')
             downloaded_files_path = []
             self.set_gg()
             try:
@@ -413,7 +419,7 @@ class Hitomi:
             os.remove(img_path)
         os.rename(os.path.join(download_path, 'temp.zip'),
                   os.path.join(download_path, clean_filename(gallery_info['title']) + '.zip'))
-        print('压缩完成')
+        logger.warning('压缩完成')
 
 
 proxy = {
@@ -421,8 +427,5 @@ proxy = {
     'https': 'http://127.0.0.1:10809'
 }
 dler = Hitomi(proxy_fmt=proxy)
-results = dler.process_query('玉之けだま', origin_result=True)
-if not results:
-    print('无结果')
-else:
-    dler.download(results[0])
+results = dler.process_query('incha de jimi de shojo', origin_result=True)
+logger.info(results[:10])
