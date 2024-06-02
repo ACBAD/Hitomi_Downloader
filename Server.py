@@ -35,6 +35,7 @@ async def zmq_server():
                 results = []
                 try:
                     results = await asyncio.to_thread(hitomi.process_query(query_str))
+                    results = results[:10]
                 except ValueError as e:
                     logger.error(f'反爬虫配置失效，搜索失败{e}')
                 except NotImplementedError as e:
@@ -44,7 +45,19 @@ async def zmq_server():
                 except Exception as e:
                     logger.error(f'其他异常，搜索失败{e}')
                 if results:
-                    response['result'] = json.dumps(results[:10])
+                    galleries = []
+                    for result in results:
+                        gallery = {}
+                        try:
+                            temp_json = hitomi.get_gallery_info(result)
+                            for label, val in temp_json.items():
+                                if not label == 'files':
+                                    gallery[label] = val
+                        except Exception as e:
+                            logger.error(f'获取info时失败{e}')
+                        if gallery:
+                            galleries.append(gallery)
+                    response['result'] = json.dumps(galleries)
                 else:
                     response['status'] = 'failed'
             elif req['type'] == 'download':

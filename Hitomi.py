@@ -6,7 +6,9 @@ import struct
 import time
 import urllib.parse
 import zipfile
+
 import requests
+
 from setup_logger import setup
 
 logger = setup('Hitomi')
@@ -50,28 +52,6 @@ class Hitomi:
         self.set_gg()
         logger.info('下载模块初始化完成')
         logger.warning('启动完成')
-
-    def get_gallery_info(self, gallery_id):
-        req_url = f'https://ltn.hitomi.la/galleries/{gallery_id}.js'
-        response = requests.get(req_url, proxies=self.proxy)
-        if response.status_code == 404:
-            return {}
-        if response.status_code == 200:
-            # 使用正则表达式匹配 galleryinfo 变量的 JSON 对象
-            if 'galleryinfo' not in response.text:
-                logger.error(response.text)
-                raise ValueError("galleryinfo not found")
-            match = re.search(r'{.*', response.text, re.DOTALL)
-            # 提取匹配的 JSON 字符串
-            json_str = match.group(0)
-            # 解析 JSON 字符串为 Python 字典
-            try:
-                galleryinfo_dict = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Error decoding JSON: {e}")
-            return galleryinfo_dict
-        else:
-            raise ValueError(f"Error getting gallery info: {response.status_code}")
 
     def set_gg(self, add_timestamp=False):
         if add_timestamp:
@@ -351,6 +331,28 @@ class Hitomi:
             filted_result = [gallery for gallery in initial_result if gallery in positive_result]
             return filted_result
         return positive_result
+
+    def get_gallery_info(self, gallery_id):
+        req_url = f'https://ltn.hitomi.la/galleries/{gallery_id}.js'
+        response = requests.get(req_url, proxies=self.proxy)
+        if response.status_code == 404:
+            return {}
+        if response.status_code == 200:
+            # 使用正则表达式匹配 galleryinfo 变量的 JSON 对象
+            if 'galleryinfo' not in response.text:
+                logger.error(response.text)
+                raise ValueError("galleryinfo not found")
+            match = re.search(r'{.*', response.text, re.DOTALL)
+            # 提取匹配的 JSON 字符串
+            json_str = match.group(0)
+            # 解析 JSON 字符串为 Python 字典
+            try:
+                galleryinfo_dict = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Error decoding JSON: {e}")
+            return galleryinfo_dict
+        else:
+            raise ValueError(f"Error getting gallery info: {response.status_code}")
 
     def process_query(self, query_string, origin_result=False):
         terms = urllib.parse.unquote(query_string).lower().strip()
