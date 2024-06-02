@@ -6,7 +6,6 @@ import struct
 import time
 import urllib.parse
 import zipfile
-
 import requests
 
 domain = 'ltn.hitomi.la'
