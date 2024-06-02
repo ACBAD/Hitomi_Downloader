@@ -42,13 +42,11 @@ class Hitomi:
         elif not os.path.exists(storage_path_fmt):
             logger.warning('配置的下载路径不存在，创建')
             os.mkdir(self.storage_path)
-        logger.info('搜索模块初始化')
         self.refresh_version()
         logger.info('搜索模块初始化完成')
         self.gg_list = []
         self.fucking_b = ''
         self.fucking_o = None
-        logger.info('下载模块初始化')
         self.set_gg()
         logger.info('下载模块初始化完成')
         logger.warning('启动完成')
@@ -56,9 +54,9 @@ class Hitomi:
     def get_gallery_info(self, gallery_id):
         req_url = f'https://ltn.hitomi.la/galleries/{gallery_id}.js'
         response = requests.get(req_url, proxies=self.proxy)
-        if response.status_code != 200:
-            raise ValueError(f"Error getting gallery info: {response.status_code}")
-        else:
+        if response.status_code == 404:
+            return {}
+        if response.status_code == 200:
             # 使用正则表达式匹配 galleryinfo 变量的 JSON 对象
             if 'galleryinfo' not in response.text:
                 logger.error(response.text)
@@ -72,6 +70,8 @@ class Hitomi:
             except json.JSONDecodeError as e:
                 raise ValueError(f"Error decoding JSON: {e}")
             return galleryinfo_dict
+        else:
+            raise ValueError(f"Error getting gallery info: {response.status_code}")
 
     def set_gg(self, add_timestamp=False):
         if add_timestamp:
@@ -370,6 +370,9 @@ class Hitomi:
         if not os.path.exists('temp'):
             os.makedirs('temp')
         gallery_info = self.get_gallery_info(gellary_id)
+        if not gallery_info:
+            logger.warning(f'gallery_id{gellary_id}无效')
+            return ''
         urls = self.get_download_urls(gallery_info)
         headers = {
             'referer': 'https://hitomi.la' + urllib.parse.quote(gallery_info['galleryurl'])
@@ -420,12 +423,4 @@ class Hitomi:
         os.rename(os.path.join(download_path, 'temp.zip'),
                   os.path.join(download_path, clean_filename(gallery_info['title']) + '.zip'))
         logger.warning('压缩完成')
-
-
-proxy = {
-    'http': 'http://127.0.0.1:10809',
-    'https': 'http://127.0.0.1:10809'
-}
-dler = Hitomi(proxy_fmt=proxy)
-results = dler.process_query('incha de jimi de shojo', origin_result=True)
-logger.info(results[:10])
+        return clean_filename(gallery_info['title']) + '.zip'
