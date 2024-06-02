@@ -26,15 +26,19 @@ async def zmq_server():
             if 'type' not in req:
                 zmq_socket.send_json({'status': 'error'})
                 continue
+            logger.warning(f'收到客户端请求:{req["type"]}')
             response = {
                 'status': 'success',
                 'result': ''
             }
             if req['type'] == 'search':
+                origin_result = False
+                if 'origin_result' in req:
+                    origin_result = req['origin_result']
                 query_str = req['query_str']
                 results = []
                 try:
-                    results = await asyncio.to_thread(hitomi.process_query(query_str))
+                    results = await asyncio.to_thread(hitomi.process_query, query_str, origin_result)
                     results = results[:10]
                 except ValueError as e:
                     logger.error(f'反爬虫配置失效，搜索失败{e}')
@@ -64,7 +68,7 @@ async def zmq_server():
                 gallery_id = req['gallery_id']
                 filename = ''
                 try:
-                    filename = await asyncio.to_thread(hitomi.download(gallery_id))
+                    filename = await asyncio.to_thread(hitomi.download, gallery_id)
                 except ValueError as e:
                     logger.error(f'反爬虫配置失效，下载失败{e}')
                 except NotImplementedError as e:
@@ -79,6 +83,7 @@ async def zmq_server():
                     response['status'] = 'failed'
                     response['result'] = 'gallery not found or server error'
             zmq_socket.send_json(response)
+            logger.info('请求完成')
     except zmq.ZMQError:
         zmq_socket.close()
         zmq_context.term()

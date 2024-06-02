@@ -386,7 +386,7 @@ class Hitomi:
             for name, url in inner_urls.items():
                 with open(f"temp/{name}", 'wb') as f:
                     logger.debug(f'downloading {name}')
-                    logger.info(f'Prograssing {now_num/total_num * 100:.2f}%')
+                    logger.info(f'Prograssing {now_num / total_num * 100:.2f}%')
                     repsone = requests.get(url, headers=headers, proxies=self.proxy)
                     if repsone.status_code != 200:
                         if repsone.status_code == 404 or repsone.status_code == 403:
@@ -426,3 +426,9 @@ class Hitomi:
                   os.path.join(download_path, clean_filename(gallery_info['title']) + '.zip'))
         logger.warning('压缩完成')
         return clean_filename(gallery_info['title']) + '.zip'
+
+
+if __name__ == '__main__':
+    hitomi = Hitomi()
+    with open('result.json', 'w', encoding='utf-8') as f:
+        f.write(json.dumps(hitomi.process_query('yuuka', origin_result=True)))
