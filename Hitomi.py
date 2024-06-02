@@ -257,30 +257,30 @@ class Hitomi:
 
     def get_galleryids_for_query(self, inner_query, inner_state, origin_result=False):
         def get_galleryids_from_data(inner_data):
+            galleryids = set()
             if not inner_data:
-                return []
+                return galleryids
             url = f'http://{domain}/{galleries_index_dir}/galleries.{self.index_versions[galleries_index_dir]}.data'
             offset, length = inner_data
             if length > 100000000 or length <= 0:
                 logger.error(f"results length {length} is too long")
-                return []
+                return galleryids
             inbuf = self.get_url_at_range(url, [offset, offset + length - 1])
             if not inbuf:
-                return []
-            galleryids = []
+                return galleryids
             pos = 0
             number_of_galleryids = struct.unpack_from('>I', inbuf, pos)[0]  # big-endian int32
             pos += 4
             expected_length = number_of_galleryids * 4 + 4
             if number_of_galleryids > 10000000 or number_of_galleryids <= 0:
                 logger.error(f"number_of_galleryids {number_of_galleryids} is too long")
-                return []
+                return galleryids
             elif len(inbuf) != expected_length:
                 logger.error(f"inbuf.byteLength {len(inbuf)} !== expected_length {expected_length}")
-                return []
+                return galleryids
             for _ in range(number_of_galleryids):
                 galleryid = struct.unpack_from('>I', inbuf, pos)[0]  # big-endian int32
-                galleryids.append(galleryid)
+                galleryids.add(galleryid)
                 pos += 4
             return galleryids
 
@@ -297,12 +297,12 @@ class Hitomi:
             else:
                 url = f"//{domain}/{nozomi_state['area']}/{nozomi_state['tag']}-{nozomi_state['language']}{nozomiextension}"
             response = requests.get(f'http:{url}', proxies=self.proxy)
-            nozomi: list[int] = []
+            nozomi: set = set()
             if response.status_code == 200:
                 array_buffer = response.content
                 total = len(array_buffer) // 4
                 for i in range(total):
-                    nozomi.append(struct.unpack('>I', array_buffer[i * 4:(i + 1) * 4])[0])
+                    nozomi.add(struct.unpack('>I', array_buffer[i * 4:(i + 1) * 4])[0])
             return nozomi
 
         key = hashlib.sha256(inner_query.encode()).digest()[:4]
@@ -310,7 +310,7 @@ class Hitomi:
         node = self.get_node_at_address(field, 0)
         if not node:
             logger.error('not node')
-            return []
+            return set()
         try:
             data = self.b_search(field, key, node)
         except NotImplementedError:
@@ -322,7 +322,7 @@ class Hitomi:
                 raise ValueError(f'B树搜索出错,{self.index_versions[galleries_index_dir]}')
         if not data:
             logger.error('not data')
-            return []
+            return set()
         positive_result = get_galleryids_from_data(data)
         logger.info(f'正向搜索结果数{len(positive_result)}')
         if not origin_result:
