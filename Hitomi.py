@@ -144,8 +144,8 @@ class Hitomi:
             response = requests.get(url, headers=headers, proxies=self.proxy)
             if response.status_code == 200 or response.status_code == 206:
                 if self.debug:
-                    with open(f'{inner_range[0]}-{inner_range[1]}', 'wb') as f:
-                        f.write(response.content)
+                    with open(f'{inner_range[0]}-{inner_range[1]}', 'wb') as fi:
+                        fi.write(response.content)
                 return response.content
             elif response.status_code == 503:
                 logger.warning(f'503 error in getting indexes, now:{_}')
@@ -364,7 +364,7 @@ class Hitomi:
             'orderbykey': 'added',
             'orderbydirection': 'desc'
         }
-        return self.get_galleryids_for_query(terms[0], inner_state, origin_result)
+        return self.get_galleryids_for_query(terms, inner_state, origin_result)
 
     def download(self, gellary_id):
         download_path = self.storage_path
@@ -384,14 +384,14 @@ class Hitomi:
             total_num = len(inner_urls)
             now_num = 0
             for name, url in inner_urls.items():
-                with open(f"temp/{name}", 'wb') as f:
+                with open(f"temp/{name}", 'wb') as fi:
                     logger.debug(f'downloading {name}')
                     logger.info(f'Prograssing {now_num / total_num * 100:.2f}%')
                     repsone = requests.get(url, headers=headers, proxies=self.proxy)
                     if repsone.status_code != 200:
                         if repsone.status_code == 404 or repsone.status_code == 403:
                             raise NotImplementedError('反爬虫配置可能已失效')
-                    f.write(repsone.content)
+                    fi.write(repsone.content)
                     downloaded_files_path.append(f"temp/{name}")
                 now_num += 1
 
@@ -430,5 +430,5 @@ class Hitomi:
 
 if __name__ == '__main__':
     hitomi = Hitomi()
-    with open('result.json', 'w', encoding='utf-8') as f:
-        f.write(json.dumps(hitomi.process_query('yuuka', origin_result=True)))
+    # print(hitomi.process_query('焦らされ焦がれる'))
+    hitomi.download(3042878)

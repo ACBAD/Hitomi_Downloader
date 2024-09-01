@@ -14,7 +14,6 @@ notify_socket = zmq_context.socket(zmq.PUB)
 notify_socket.bind('tcp://127.0.0.1:37890')
 req_socket.bind('tcp://127.0.0.1:37980')
 logger = setup('hitomi_server')
-
 proxy = {
     'http': 'http://127.0.0.1:10809',
     'https': 'http://127.0.0.1:10809'
@@ -95,7 +94,9 @@ async def run_command():
             gallery_id = command['gallery_id']
             filename = ''
             try:
+                logger.debug('已调用hitomi模块')
                 filename = await asyncio.to_thread(hitomi.download, gallery_id)
+                logger.debug('hitomi调用完成')
             except ValueError as e:
                 logger.error(f'反爬虫配置失效，下载失败{e}')
             except NotImplementedError as e:
@@ -114,6 +115,11 @@ async def run_command():
             response['result'] = 'Method Not Allowed'
         notify_socket.send_json(response)
         logger.info(f'{command["type"]}: Done')
+    logger.debug('socket关闭')
+    req_socket.close()
+    notify_socket.close()
+    zmq_context.term()
+    logger.debug('socket和run_command已关闭')
 
 
 async def shell():
@@ -124,17 +130,17 @@ async def shell():
             logger.warning('shell shutdown')
             break
         else:
-            usr_in.split(' ', maxsplit=1)
-            if usr_in[0] == 'download':
-                if not usr_in[1].isdigit():
+            usr_ins = usr_in.split(' ', maxsplit=1)
+            if usr_ins[0] == 'download':
+                if not usr_ins[1].isdigit():
                     logger.error('Not Digit')
                     continue
-                await queue.put({'type': usr_in[0], 'gallery_id': int(usr_in[1])})
+                await queue.put({'type': usr_ins[0], 'gallery_id': int(usr_ins[1])})
+    logger.debug('shell已关闭')
+
 
 loop = asyncio.get_event_loop()
 loop.create_task(zmq_server())
 loop.create_task(shell())
 loop.run_until_complete(run_command())
-req_socket.close()
-zmq_context.term()
 logger.warning('Server App down')
