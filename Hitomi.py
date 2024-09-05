@@ -1,3 +1,4 @@
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -360,7 +361,7 @@ class Hitomi:
         else:
             raise ValueError(f"Error getting gallery info: {response.status_code}")
 
-    def process_query(self, query_string, origin_result=False):
+    def process_query(self, query_string, origin_result=False, multithreading=True):
         terms = urllib.parse.unquote(query_string).lower().strip().split(' ')
         inner_state = {
             'area': 'all',
@@ -371,18 +372,25 @@ class Hitomi:
             'orderbydirection': 'desc'
         }
         results = set()
-        for term in terms:
-            logger.debug(f'now searching for {term}')
-            positive_result = self.get_galleryids_for_query(term)
-            if not results:
-                results = positive_result.copy()
-            else:
-                results = results & positive_result
+        if multithreading:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                search_results = executor.map(self.get_galleryids_for_query, terms)
+                for search_result in search_results:
+                    if not results:
+                        results = search_result.copy()
+                    else:
+                        results = results & search_result
+        else:
+            # legecy search
+            for term in terms:
+                logger.debug(f'now searching for {term}')
+                positive_result = self.get_galleryids_for_query(term)
                 if not results:
-                    logger.warning('SET EMPTY')
-                # new_results = set()
-                # new_results = {galleryid for galleryid in positive_result if galleryid in results}
-                # results.update(new_results)
+                    results = positive_result.copy()
+                else:
+                    results = results & positive_result
+                    if not results:
+                        logger.warning('SET EMPTY')
         logger.info(f'正向搜索结果数{len(results)}')
         if not origin_result:
             initial_result = self.get_galleryids_from_nozomi(inner_state)
