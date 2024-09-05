@@ -24,6 +24,22 @@ languages_index_dir = 'languagesindex'
 nozomiurl_index_dir = 'nozomiurlindex'
 
 
+def secure_get(*get_args, **get_kwargs):
+    for itime in range(10):
+        try:
+            response = requests.get(*get_args, **get_kwargs)
+            if 200 <= response.status_code < 300:
+                return response
+        except KeyboardInterrupt:
+            raise KeyboardInterrupt
+        except Exception as e:
+            logger.warning(str(e))
+        logger.warning(f'网络请求出错，重试{itime}')
+        time.sleep(1)
+    logger.error('请求失败')
+    return None
+
+
 class Hitomi:
     def __init__(self, storage_path_fmt=None, proxy_fmt=None, debug_fmt=False):
         logger.warning('Hitomi init called')
@@ -35,7 +51,7 @@ class Hitomi:
         }
         self.debug = debug_fmt
         if self.debug:
-            logger.handlers[0].setLevel('DEBUG')
+            logger.setLevel('DEBUG')
         self.init = False
         self.proxy = proxy_fmt
         if storage_path_fmt is None:
@@ -58,7 +74,7 @@ class Hitomi:
             gg_url = f'https://ltn.hitomi.la/gg.js?_={int(time.time() * 1000)}'
         else:
             gg_url = 'https://ltn.hitomi.la/gg.js?'
-        gg_resp = requests.get(gg_url, proxies=self.proxy).text.split('\n')
+        gg_resp = secure_get(gg_url, proxies=self.proxy).text.split('\n')
         gg_dict = {'gg_list': [], 'fucking_b': '', 'fucking_o': None}
         for line in gg_resp:
             if line.startswith('case'):
@@ -78,7 +94,7 @@ class Hitomi:
             _ = 0
             for _ in range(10):
                 url = f'http://{domain}/{version_name}/version?_={int(time.time() * 1000)}'
-                response = requests.get(url, proxies=self.proxy)
+                response = secure_get(url, proxies=self.proxy)
                 version = response.text
                 if not version:
                     logger.warning(f'refresh_versions: getting {version_name} failed, now:{_}')
@@ -141,11 +157,8 @@ class Hitomi:
             headers = {
                 'Range': f'bytes={inner_range[0]}-{inner_range[1]}'
             }
-            response = requests.get(url, headers=headers, proxies=self.proxy)
+            response = secure_get(url, headers=headers, proxies=self.proxy)
             if response.status_code == 200 or response.status_code == 206:
-                if self.debug:
-                    with open(f'{inner_range[0]}-{inner_range[1]}', 'wb') as fi:
-                        fi.write(response.content)
                 return response.content
             elif response.status_code == 503:
                 logger.warning(f'503 error in getting indexes, now:{_}')
@@ -255,8 +268,27 @@ class Hitomi:
         subnode = self.get_node_at_address(field, subnode_address)
         return self.b_search(field, key, subnode)
 
-    def get_galleryids_for_query(self, inner_query, inner_state, origin_result=False):
-        def get_galleryids_from_data(inner_data):
+    def get_galleryids_from_nozomi(self, nozomi_state):
+        if nozomi_state['orderby'] != 'date' or nozomi_state['orderbykey'] == 'published':
+            if nozomi_state['area'] == 'all':
+                url = f"//{domain}/{nozomi_state['orderby']}/{nozomi_state['orderbykey']}-{nozomi_state['language']}{nozomiextension}"
+            else:
+                url = f"//{domain}/{nozomi_state['area']}/{nozomi_state['orderby']}/{nozomi_state['orderbykey']}/{nozomi_state['tag']}-{nozomi_state['language']}{nozomiextension}"
+        elif nozomi_state['area'] == 'all':
+            url = f"//{domain}/{nozomi_state['tag']}-{nozomi_state['language']}{nozomiextension}"
+        else:
+            url = f"//{domain}/{nozomi_state['area']}/{nozomi_state['tag']}-{nozomi_state['language']}{nozomiextension}"
+        response = secure_get(f'http:{url}', proxies=self.proxy)
+        nozomi: set = set()
+        if response.status_code == 200:
+            array_buffer = response.content
+            total = len(array_buffer) // 4
+            for i in range(total):
+                nozomi.add(struct.unpack('>I', array_buffer[i * 4:(i + 1) * 4])[0])
+        return nozomi
+
+    def get_galleryids_for_query(self, inner_query) -> set:
+        def get_galleryids_from_data(inner_data) -> set:
             galleryids = set()
             if not inner_data:
                 return galleryids
@@ -286,25 +318,6 @@ class Hitomi:
 
         inner_query = inner_query.replace('_', ' ')
 
-        def get_galleryids_from_nozomi(nozomi_state):
-            if nozomi_state['orderby'] != 'date' or nozomi_state['orderbykey'] == 'published':
-                if nozomi_state['area'] == 'all':
-                    url = f"//{domain}/{nozomi_state['orderby']}/{nozomi_state['orderbykey']}-{nozomi_state['language']}{nozomiextension}"
-                else:
-                    url = f"//{domain}/{nozomi_state['area']}/{nozomi_state['orderby']}/{nozomi_state['orderbykey']}/{nozomi_state['tag']}-{nozomi_state['language']}{nozomiextension}"
-            elif nozomi_state['area'] == 'all':
-                url = f"//{domain}/{nozomi_state['tag']}-{nozomi_state['language']}{nozomiextension}"
-            else:
-                url = f"//{domain}/{nozomi_state['area']}/{nozomi_state['tag']}-{nozomi_state['language']}{nozomiextension}"
-            response = requests.get(f'http:{url}', proxies=self.proxy)
-            nozomi: set = set()
-            if response.status_code == 200:
-                array_buffer = response.content
-                total = len(array_buffer) // 4
-                for i in range(total):
-                    nozomi.add(struct.unpack('>I', array_buffer[i * 4:(i + 1) * 4])[0])
-            return nozomi
-
         key = hashlib.sha256(inner_query.encode()).digest()[:4]
         field = 'galleries'
         node = self.get_node_at_address(field, 0)
@@ -323,18 +336,11 @@ class Hitomi:
         if not data:
             logger.error('not data')
             return set()
-        positive_result = get_galleryids_from_data(data)
-        logger.info(f'正向搜索结果数{len(positive_result)}')
-        if not origin_result:
-            initial_result = get_galleryids_from_nozomi(inner_state)
-            logger.info(f'偏好过滤结果数{len(initial_result)}')
-            filted_result = [gallery for gallery in initial_result if gallery in positive_result]
-            return filted_result
-        return positive_result
+        return get_galleryids_from_data(data)
 
     def get_gallery_info(self, gallery_id):
         req_url = f'https://ltn.hitomi.la/galleries/{gallery_id}.js'
-        response = requests.get(req_url, proxies=self.proxy)
+        response = secure_get(req_url, proxies=self.proxy)
         if response.status_code == 404:
             return {}
         if response.status_code == 200:
@@ -355,7 +361,7 @@ class Hitomi:
             raise ValueError(f"Error getting gallery info: {response.status_code}")
 
     def process_query(self, query_string, origin_result=False):
-        terms = urllib.parse.unquote(query_string).lower().strip()
+        terms = urllib.parse.unquote(query_string).lower().strip().split(' ')
         inner_state = {
             'area': 'all',
             'tag': 'index',
@@ -364,9 +370,29 @@ class Hitomi:
             'orderbykey': 'added',
             'orderbydirection': 'desc'
         }
-        return self.get_galleryids_for_query(terms, inner_state, origin_result)
+        results = set()
+        for term in terms:
+            logger.debug(f'now searching for {term}')
+            positive_result = self.get_galleryids_for_query(term)
+            if not results:
+                results = positive_result.copy()
+            else:
+                results = results & positive_result
+                if not results:
+                    logger.warning('SET EMPTY')
+                # new_results = set()
+                # new_results = {galleryid for galleryid in positive_result if galleryid in results}
+                # results.update(new_results)
+        logger.info(f'正向搜索结果数{len(results)}')
+        if not origin_result:
+            initial_result = self.get_galleryids_from_nozomi(inner_state)
+            logger.info(f'偏好过滤结果数{len(initial_result)}')
+            filted_result = {gallery for gallery in initial_result if gallery in results}
+            return filted_result
+        return results
 
-    def download(self, gellary_id):
+    def download(self, gellary_id: int):
+        assert isinstance(gellary_id, int)
         download_path = self.storage_path
         downloaded_files_path = []
         if not os.path.exists('temp'):
@@ -387,7 +413,7 @@ class Hitomi:
                 with open(f"temp/{name}", 'wb') as fi:
                     logger.debug(f'downloading {name}')
                     logger.info(f'Prograssing {now_num / total_num * 100:.2f}%')
-                    repsone = requests.get(url, headers=headers, proxies=self.proxy)
+                    repsone = secure_get(url, headers=headers, proxies=self.proxy)
                     if repsone.status_code != 200:
                         if repsone.status_code == 404 or repsone.status_code == 403:
                             raise NotImplementedError('反爬虫配置可能已失效')
@@ -430,5 +456,6 @@ class Hitomi:
 
 if __name__ == '__main__':
     hitomi = Hitomi()
-    # print(hitomi.process_query('焦らされ焦がれる'))
-    hitomi.download(3042878)
+    print(hitomi.process_query('Kikyo No Seikatsu Kanri'))
+    # for comic in download_list:
+    #     hitomi.download(comic)
