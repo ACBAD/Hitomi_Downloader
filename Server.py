@@ -64,7 +64,7 @@ async def run_command():
             query_str = command['query_str']
             results = set()
             try:
-                results: set = await asyncio.to_thread(hitomi.process_query, query_str, origin_result)
+                results: set = await asyncio.to_thread(hitomi.query, query_str, origin_result)
                 results = results[:10]
             except ValueError as e:
                 logger.error(f'反爬虫配置失效，搜索失败{e}')

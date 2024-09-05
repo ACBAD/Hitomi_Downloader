@@ -29,7 +29,7 @@ hitomi = Hitomi(proxy_fmt=proxy)
 
 # 搜索
 query_str = 'HayaseYuuka'
-results: list = hitomi.process_query(query_str)
+results: list = hitomi.query(query_str)
 # 下载
 target_gallery = results[0]
 filename = hitomi.download(target_gallery)

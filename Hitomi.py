@@ -361,7 +361,7 @@ class Hitomi:
         else:
             raise ValueError(f"Error getting gallery info: {response.status_code}")
 
-    def process_query(self, query_string, origin_result=False, multithreading=True):
+    def query(self, query_string, origin_result=False, multithreading=True):
         terms = urllib.parse.unquote(query_string).lower().strip().split(' ')
         inner_state = {
             'area': 'all',
@@ -464,6 +464,6 @@ class Hitomi:
 
 if __name__ == '__main__':
     hitomi = Hitomi()
-    print(hitomi.process_query('Kikyo No Seikatsu Kanri'))
+    print(hitomi.query('Kikyo No Seikatsu Kanri'))
     # for comic in download_list:
     #     hitomi.download(comic)
