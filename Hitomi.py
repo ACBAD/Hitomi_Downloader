@@ -42,7 +42,7 @@ def secure_get(*get_args, **get_kwargs):
 
 
 class Hitomi:
-    def __init__(self, storage_path_fmt=None, proxy_fmt=None, debug_fmt=False):
+    def __init__(self, storage_path_fmt=os.curdir, proxy_fmt=None, debug_fmt=False):
         logger.warning('Hitomi init called')
         self.index_versions = {
             index_dir: '',
@@ -55,12 +55,12 @@ class Hitomi:
             logger.setLevel('DEBUG')
         self.init = False
         self.proxy = proxy_fmt
-        if storage_path_fmt is None:
-            self.storage_path = os.curdir
+        self.storage_path = storage_path_fmt
+        if storage_path_fmt is os.curdir:
             logger.warning(f'下载路径未配置，默认采用当前工作路径:{self.storage_path}')
         elif not os.path.exists(storage_path_fmt):
             logger.warning('配置的下载路径不存在，创建')
-            os.mkdir(self.storage_path)
+            os.mkdir(storage_path_fmt)
         self.refresh_version()
         logger.info('搜索模块初始化完成')
         self.gg_list = []
@@ -381,7 +381,7 @@ class Hitomi:
                     else:
                         results = results & search_result
         else:
-            # legecy search
+            # legacy search
             for term in terms:
                 logger.debug(f'now searching for {term}')
                 positive_result = self.get_galleryids_for_query(term)
@@ -399,7 +399,7 @@ class Hitomi:
             return filted_result
         return results
 
-    def download(self, gellary_id: int):
+    def download(self, gellary_id: int, max_threads=1):
         assert isinstance(gellary_id, int)
         download_path = self.storage_path
         downloaded_files_path = []
@@ -414,32 +414,31 @@ class Hitomi:
             'referer': 'https://hitomi.la' + urllib.parse.quote(gallery_info['galleryurl'])
         }
 
-        def download_file(inner_urls):
-            total_num = len(inner_urls)
-            now_num = 0
-            for name, url in inner_urls.items():
-                with open(f"temp/{name}", 'wb') as fi:
-                    logger.debug(f'downloading {name}')
-                    logger.info(f'Prograssing {now_num / total_num * 100:.2f}%')
-                    repsone = secure_get(url, headers=headers, proxies=self.proxy)
-                    if repsone.status_code != 200:
-                        if repsone.status_code == 404 or repsone.status_code == 403:
-                            raise NotImplementedError('反爬虫配置可能已失效')
-                    fi.write(repsone.content)
-                    downloaded_files_path.append(f"temp/{name}")
-                now_num += 1
+        def download_file(inner_name, inner_url):
+            response = secure_get(inner_url, headers=headers, proxies=self.proxy)
+            if not response:
+                raise NotImplementedError('反爬虫配置可能已失效')
+            with open(f"temp/{inner_name}", 'wb') as fi:
+                fi.write(response.content)
+            return f'temp/{inner_name}'
 
         try:
-            download_file(urls)
-            logger.warning('下载完成')
+            if max_threads > 1:
+                params = list(urls.items())
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+                    paths = executor.map(lambda p: download_file(*p), params)
+                    downloaded_files_path = list(paths)
+            else:
+                total_num = len(urls)
+                now_num = 0
+                for name, url in urls.items():
+                    logger.debug(f'downloading {name}')
+                    logger.info(f'Prograssing {now_num / total_num * 100:.2f}%')
+                    downloaded_files_path.append(download_file(name, url))
+                    now_num += 1
+            logger.warning(f'{gellary_id}下载完成')
         except NotImplementedError:
-            logger.warning('反爬配置失效，正在重新配置')
-            downloaded_files_path = []
-            self.set_gg()
-            try:
-                download_file(urls)
-            except NotImplementedError:
-                raise ValueError('爬虫失效')
+            raise ValueError('爬虫失效')
 
         def clean_filename(filename):
             # 定义不允许的字符
@@ -458,12 +457,13 @@ class Hitomi:
             os.remove(img_path)
         os.rename(os.path.join(download_path, 'temp.zip'),
                   os.path.join(download_path, clean_filename(gallery_info['title']) + '.zip'))
-        logger.warning('压缩完成')
         return clean_filename(gallery_info['title']) + '.zip'
 
 
 if __name__ == '__main__':
-    hitomi = Hitomi()
-    print(hitomi.query('Kikyo No Seikatsu Kanri'))
-    # for comic in download_list:
-    #     hitomi.download(comic)
+    hitomi = Hitomi(storage_path_fmt='bons')
+    download_list = [3025589, 3024839, 3024826, 3023882, 3023604, 3022286, 3019628, 3019601, 3018562, 3017719, 3016320,
+                     3016864, 3008677, 3004373, 2998150, 2988565, 2987249, 2976856, 2975981, 2964452, 2958482, 2954091,
+                     2952773, 2949235, 2949234, 2946801, 2945139, 2944506, 2944420, 2941958, 2939743, 2937450, 2936765]
+    for comic in download_list:
+        hitomi.download(comic, max_threads=5)
