@@ -10,6 +10,8 @@ import zipfile
 from io import BytesIO
 from typing import Union
 import requests
+from tqdm import tqdm
+
 from setup_logger import setup
 
 logger = setup('Hitomi')
@@ -181,17 +183,31 @@ class Comic:
             return inner_name, img_byte_arr
 
         if max_threads > 1:
-            params = list(self.file_urls.items())
+            # 使用tqdm跟踪并发下载进度
+            total_num = len(self.file_urls)
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
-                downloaded_files_data = list(executor.map(lambda p: download_file(*p), params))
+                # 提交所有的下载任务
+                futures = {executor.submit(download_file, name, url): name for name, url in self.file_urls.items()}
+                with tqdm(total=total_num, desc="Downloading", ncols=100, unit="file") as pbar:
+                    # 使用as_completed来获取任务的完成状态
+                    for future in concurrent.futures.as_completed(futures):
+                        name = futures[future]
+                        try:
+                            result = future.result()
+                            downloaded_files_data.append(result)
+                        except Exception as e:
+                            logger.error(f"Error downloading {name}: {e}")
+                        # 更新进度条
+                        pbar.update(1)
         else:
             total_num = len(self.file_urls)
             now_num = 0
-            for name, url in self.file_urls.items():
+            # 使用tqdm显示进度条
+            for name, url in tqdm(self.file_urls.items(), desc="Downloading", total=total_num, ncols=100, unit="file"):
                 logger.debug(f'downloading {name}')
-                logger.info(f'Prograssing {now_num / total_num * 100:.2f}%')
                 downloaded_files_data.append(download_file(name, url))
                 now_num += 1
+
         logger.warning(f'{self.id}下载完成')
         if filename is None:
             filename = str(self.id)
@@ -480,4 +496,4 @@ if __name__ == '__main__':
     hitomi = Hitomi(proxy_settings={'http': 'http://127.0.0.1:10809',
                                     'https': 'http://127.0.0.1:10809'})
     comic = hitomi.get_comic(3240918)
-    comic.download(max_threads=5)
+    comic.download()

@@ -2,3 +2,4 @@ requests~=2.32.3
 pyzmq~=26.0.3
 aioconsole~=0.7.1
 colorlog~=6.8.2
+tqdm~=4.67.1
