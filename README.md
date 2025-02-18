@@ -2,7 +2,7 @@
 
 # Hitomi.la Downloader
 
-[English](https://github.com/tetrix1993/hitomi-downloader/blob/master/README_EN.md)
+[English](https://github.com/ACBAD/Hitomi_Downloader/blob/master/README_EN.md)
 
 hitomi.la上漫画的搜索和下载的python实现
 
