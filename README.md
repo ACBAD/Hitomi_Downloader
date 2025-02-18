@@ -2,6 +2,8 @@
 
 # Hitomi.la Downloader
 
+[English](https://github.com/tetrix1993/hitomi-downloader/blob/master/README_EN.md)
+
 hitomi.la上漫画的搜索和下载的python实现
 
 jm的漫画后边有广告，eh的漫画需要点数才能下，这个网站允许游客下载，但是看了看目前GitHub上好像还没有这个的逆向，于是花了点时间写了这个
