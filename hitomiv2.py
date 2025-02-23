@@ -9,7 +9,7 @@ import time
 import urllib.parse
 import zipfile
 from io import BytesIO
-from typing import Union
+from typing import Union, List
 import requests
 from tqdm import tqdm
 
@@ -157,6 +157,9 @@ class Comic:
         self.storage_path = storage_path
         self.parodys = json_info['parodys']
         self.characters = json_info['characters']
+
+    def __str__(self):
+        return f'Title: {self.title} ID: {self.id} Author: {self.authors}'
 
     def download(self, max_threads=1, filename=None, storage_path=None):
         if storage_path is not None:
@@ -426,7 +429,7 @@ class Hitomi:
         else:
             raise ValueError(f"Error getting gallery info: {response.status_code}")
 
-    def query(self, query_string, origin_result=False, multithreading=True) -> list:
+    def query(self, query_string, origin_result=False, multithreading=True, ret_id=False) -> Union[List[Comic], List[int]]:
         terms = urllib.parse.unquote(query_string).lower().strip().split(' ')
         results = set()
         if multithreading:
@@ -486,10 +489,11 @@ class Hitomi:
             initial_result = get_galleryids_from_nozomi(inner_state)
             logger.info(f'偏好过滤结果数{len(initial_result)}')
             final_result_ids = {gallery for gallery in initial_result if gallery in results}
-
+        if ret_id:
+            return final_result_ids
         results = []
-        for comic_id in final_result_ids:
-            results.append(self.get_comic(comic_id))
+        for icomic_id in final_result_ids:
+            results.append(self.get_comic(icomic_id))
         return results
 
 
