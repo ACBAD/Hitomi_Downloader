@@ -4,6 +4,7 @@ import json
 import os
 import re
 import struct
+import sys
 import time
 import urllib.parse
 import zipfile
@@ -493,7 +494,17 @@ class Hitomi:
 
 
 if __name__ == '__main__':
+    if len(sys.argv) == 1:
+        print('直接将id作为参数以下载')
+        exit(0)
+    comic_list = sys.argv
+    for comic_id in comic_list:
+        if not comic_id.isdigit():
+            print(f'{comic_id}为非法id，退出')
+            exit(0)
+
     hitomi = Hitomi(proxy_settings={'http': 'http://127.0.0.1:10809',
                                     'https': 'http://127.0.0.1:10809'})
-    comic = hitomi.get_comic(3240918)
-    comic.download()
+    for comic_id in comic_list:
+        comic = hitomi.get_comic(comic_id)
+        comic.download(max_threads=5)
