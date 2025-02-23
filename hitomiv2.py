@@ -426,7 +426,7 @@ class Hitomi:
         else:
             raise ValueError(f"Error getting gallery info: {response.status_code}")
 
-    def query(self, query_string, origin_result=False, multithreading=True) -> list[Comic]:
+    def query(self, query_string, origin_result=False, multithreading=True) -> list:
         terms = urllib.parse.unquote(query_string).lower().strip().split(' ')
         results = set()
         if multithreading:
@@ -498,6 +498,7 @@ if __name__ == '__main__':
         print('直接将id作为参数以下载')
         exit(0)
     comic_list = sys.argv
+    del comic_list[0]
     for comic_id in comic_list:
         if not comic_id.isdigit():
             print(f'{comic_id}为非法id，退出')
