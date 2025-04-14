@@ -41,20 +41,33 @@ else:
     print('不存在的id')
 ```
 
-## 参数详解
+## 代码结构
 
 - `Hitomi`类
+
+    主要逻辑所在，可以根据标题或id搜索本子，并返回`Comic`类的实例
     - `storage_path_fmt`用于传入下载路径，下载的漫画将以压缩包的形式存储在这，默认采用工作目录
     - `proxy_settings`用于传入代理设置，以上文实现中的格式
     - `debug_fmt`调试模式，默认为False，当你认为脚本工作不正常时可以传入True来查看调试信息，提交issue请附带debug日志
 
-- `hitomi.query`函数
+- `Comic`类
+
+    抽象的本子类，针对每个本子进行操作
+    - `json_info`初始化本子需要的参数json，一般由hitomi实例给出
+    - `storage_path`存储路径，调用`download`方法时本子的存储位置
+
+## 常用方法
+- `Hitomi.query`方法
     - `query_string`搜索关键词，一个字符串变量
     - `origin_result`默认为False，即只返回中文结果。传入True时将返回完全根据关键词查询的结果
-    - 返回的结果是列表，包含搜索到搜索到的Comic类的实例，失败和没有结果都会返回空列表
-- `Comic.download`函数
+    - `ret_id`默认为False，启用时返回的列表将为id，避免有大量搜索结果时请求过慢
+    - 返回的结果是列表，内容由`ret_id`参数决定，失败和没有结果都会返回空列表
+- `Hitomi.get_comic`方法
+    - `gallery_id`本子的hitomi id，
+    - 获取本子的`Comic`类实例，用于下载
+- `Comic.download`方法
   - `max_threads`最大线程数，默认是1，不启用多线程
-    - 返回下载的文件名，如果下载失败就为空字符串
+  - 返回下载的文件名，如果下载失败就为空字符串
 
 ## 注意事项
 
