@@ -17,7 +17,7 @@ from setup_logger import setup
 
 logger = setup('Hitomi')
 
-domain = 'ltn.hitomi.la'
+domain = 'ltn.gold-usergeneratedcontent.net'
 galleryblockextension = '.html'
 galleryblockdir = 'galleryblock'
 nozomiextension = '.nozomi'
@@ -26,9 +26,6 @@ index_dir = 'tagindex'
 galleries_index_dir = 'galleriesindex'
 languages_index_dir = 'languagesindex'
 nozomiurl_index_dir = 'nozomiurlindex'
-gg_list = []
-fucking_b = True
-fucking_o = True
 
 index_versions = {
     index_dir: '',
@@ -59,25 +56,34 @@ def secure_get(get_url, header=None):
 
 
 def set_gg(add_timestamp=False):
-    global gg_list, fucking_b, fucking_o
     if add_timestamp:
-        gg_url = f'https://ltn.hitomi.la/gg.js?_={int(time.time() * 1000)}'
+        gg_url = f'https://ltn.gold-usergeneratedcontent.net/gg.js?_={int(time.time() * 1000)}'
     else:
-        gg_url = 'https://ltn.hitomi.la/gg.js?'
-    gg_resp = secure_get(gg_url).text.split('\n')
-    gg_dict = {'gg_list': [], 'fucking_b': '', 'fucking_o': None}
-    for line in gg_resp:
-        if line.startswith('case'):
-            gg_dict['gg_list'].append(int(line[5:][:-1]))
-        elif line.startswith('b:'):
-            gg_dict['fucking_b'] = str(line[4:][:-1])
-        elif line.startswith('o = 1'):
-            gg_dict['fucking_o'] = True
-        elif line.startswith('o = 0'):
-            gg_dict['fucking_o'] = False
-    gg_list = gg_dict['gg_list']
-    fucking_b = gg_dict['fucking_b']
-    fucking_o = gg_dict['fucking_o']
+        gg_url = 'https://ltn.gold-usergeneratedcontent.net/gg.js?'
+    gg_resp = secure_get(gg_url).text
+
+    m = {}
+
+    keys = []
+    for match in re.finditer(
+            r"case\s+(\d+):(?:\s*o\s*=\s*(\d+))?", gg_resp):
+        key, value = match.groups()
+        keys.append(int(key))
+
+        if value:
+            value = int(value)
+            for key in keys:
+                m[key] = value
+            keys.clear()
+
+    for match in re.finditer(
+            r"if\s+\(g\s*===?\s*(\d+)\)[\s{]*o\s*=\s*(\d+)", gg_resp):
+        m[int(match.group(1))] = int(match.group(2))
+
+    d = re.search(r"(?:var\s|default:)\s*o\s*=\s*(\d+)", gg_resp)
+    b = re.search(r"b:\s*[\"'](.+)[\"']", gg_resp)
+
+    return m, b.group(1).strip("/"), int(d.group(1)) if d else 0
 
 
 def refresh_version():
@@ -99,49 +105,24 @@ def refresh_version():
 
 
 def decode_download_urls(info):
+    gg_m, gg_b, gg_d = set_gg()
+
     # noinspection PyUnusedLocal
-    def url_from_hash(galleryid, image, inner_dir=None, ext=None):
-        ext = ext or inner_dir or image['name'].split('.').pop()
-        inner_dir = inner_dir or 'images'
-        if fucking_b == 0:
-            raise ValueError('Invalid fucking_b')
+    def url_from_hash(galleryid, image, ext=None):
+        ext = ext or "webp" or image['name'].split('.').pop()
+        ihash = image["hash"]
+        inum = int(ihash[-1] + ihash[-3:-1], 16)
+        url = "https://{}{}.{}/{}/{}/{}.{}".format(
+            ext[0], gg_m.get(inum, gg_d) + 1, "gold-usergeneratedcontent.net",
+            gg_b, inum, ihash, ext,
+        )
 
-        def gg_s(h):
-            m = re.search(r'(..)(.)$', h)
-            if m:
-                return str(int(m.group(2) + m.group(1), 16))
-            return ''
-
-        return f'https://a.hitomi.la/{inner_dir}/{fucking_b}{gg_s(image["hash"])}/{image["hash"]}.{ext}'
-
-    def url_from_url(url, base):
-
-        def subdomain_from_url(inner_url, inner_base):
-            if not gg_list or fucking_o is None:
-                raise ValueError('反爬虫破解未配置')
-
-            def decide_gg(inner_g):
-                if inner_g in gg_list:
-                    return 1 if fucking_o else 0
-                return 0 if fucking_o else 1
-
-            retval = 'b'
-            if inner_base:
-                retval = inner_base
-            b = 16
-            match = re.search(r'/[0-9a-f]{61}([0-9a-f]{2})([0-9a-f])', inner_url)
-            if not match:
-                return 'a'
-            m1, m2 = match.group(1), match.group(2)
-            g = int(m2 + m1, b)
-            return chr(97 + decide_gg(g)) + retval
-
-        return re.sub(r'//..?\.hitomi\.la/', f'//{subdomain_from_url(url, base)}.hitomi.la/', url)
+        return url
 
     download_urls = {}
     for file in info['files']:
         image_name = re.sub(r'\.[^.]+$', '.webp', file['name'])
-        download_urls[image_name] = url_from_url(url_from_hash(info['id'], file, 'webp', None), 'a')
+        download_urls[image_name] = url_from_hash(info['id'], file, None)
     return download_urls
 
 
@@ -239,8 +220,6 @@ class Hitomi:
         proxy = proxy_settings
         refresh_version()
         logger.info('搜索功能初始化完成')
-        set_gg()
-        logger.info('下载功能初始化完成')
         self.storage_path = storage_path_fmt
         if storage_path_fmt is os.curdir:
             logger.warning(f'下载路径未配置，默认采用当前工作路径:{self.storage_path}')
@@ -408,7 +387,7 @@ class Hitomi:
         return get_galleryids_from_data(data)
 
     def get_comic(self, gallery_id) -> Union[Comic, None]:
-        req_url = f'https://ltn.hitomi.la/galleries/{gallery_id}.js'
+        req_url = f'https://ltn.gold-usergeneratedcontent.net/galleries/{gallery_id}.js'
         response = secure_get(req_url)
         if response.status_code == 404:
             return None
