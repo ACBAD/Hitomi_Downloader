@@ -334,9 +334,13 @@ class Hitomi:
         if there:
             return node['datas'][where]
         elif is_leaf(node):
-            raise NotImplementedError('index_versions已过期')
+            # raise NotImplementedError('index_versions已过期')
+            logger.debug('reach node leaf, perheps error')
+            return None
         if node['subnode_addresses'][where] == 0:
-            raise NotImplementedError('index_versions已过期')
+            # raise NotImplementedError('index_versions已过期')
+            logger.debug('reach node leaf, perheps error')
+            return None
         logger.debug(f'subnode_addresses: {node["subnode_addresses"]}')
         subnode_address = node['subnode_addresses'][where]
         logger.debug(f'where:{where}, subnode_address:{subnode_address}')
@@ -382,12 +386,12 @@ class Hitomi:
             return set()
         data = self.b_search(field, key, node)
         if not data:
-            logger.error('not data')
+            logger.debug('not data')
             return set()
         return get_galleryids_from_data(data)
 
     def get_comic(self, gallery_id) -> Union[Comic, None]:
-        req_url = f'https://ltn.gold-usergeneratedcontent.net/galleries/{gallery_id}.js'
+        req_url = f'https://{domain}/galleries/{gallery_id}.js'
         response = secure_get(req_url)
         if response.status_code == 404:
             return None
