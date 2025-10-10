@@ -9,7 +9,7 @@ import time
 import urllib.parse
 import zipfile
 from io import BytesIO
-from typing import Union, List
+from typing import Union, List, Set
 import requests
 from tqdm import tqdm
 
@@ -412,7 +412,7 @@ class Hitomi:
         else:
             raise ValueError(f"Error getting gallery info: {response.status_code}")
 
-    def query(self, query_string, origin_result=False, multithreading=True, ret_id=False) -> Union[List[Comic], List[int]]:
+    def query(self, query_string, origin_result=False, multithreading=True, ret_id=False) -> Union[List[Comic], Set[int]]:
         terms = urllib.parse.unquote(query_string).lower().strip().split(' ')
         results = set()
         if multithreading:
