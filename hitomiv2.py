@@ -173,7 +173,7 @@ class Comic:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
                 # 提交所有的下载任务
                 futures = {executor.submit(download_file, name, url): name for name, url in self.file_urls.items()}
-                with tqdm(total=total_num, desc="Downloading", ncols=100, unit="file") as pbar:
+                with tqdm(total=total_num, desc="Downloading", unit="file") as pbar:
                     # 使用as_completed来获取任务的完成状态
                     for future in concurrent.futures.as_completed(futures):
                         name = futures[future]
