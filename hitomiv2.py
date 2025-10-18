@@ -188,7 +188,7 @@ class Comic:
             total_num = len(self.file_urls)
             now_num = 0
             # 使用tqdm显示进度条
-            for name, url in tqdm(self.file_urls.items(), desc="Downloading", total=total_num, ncols=100, unit="file"):
+            for name, url in tqdm(self.file_urls.items(), desc="Downloading", total=total_num, unit="file"):
                 logger.debug(f'downloading {name}')
                 downloaded_files_data.append(download_file(name, url))
                 now_num += 1
