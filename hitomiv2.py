@@ -197,11 +197,14 @@ class Comic:
         if filename is None:
             filename = str(self.id)
         # 在内存中创建一个ZIP文件
-        downloaded_files_data = sorted(downloaded_files_data, key=lambda item: item[0])
+        downloaded_files_data: list[tuple[str, BytesIO]] = sorted(downloaded_files_data, key=lambda item: item[0])
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_name, file_data in downloaded_files_data:
-                zipf.writestr(file_name, file_data.read())
+                zinfo = zipfile.ZipInfo(file_name, date_time=(1980, 1, 1, 0, 0, 0))
+                zinfo.external_attr = 0o100644 << 16
+                zinfo.compress_type = zipfile.ZIP_DEFLATED
+                zipf.writestr(zinfo, file_data.getvalue())
         # 将ZIP文件保存到硬盘
         zip_buffer.seek(0)
         with open(os.path.join(download_path, f'{filename}.zip'), 'wb') as f:
