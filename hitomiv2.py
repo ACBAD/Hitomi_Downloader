@@ -204,7 +204,7 @@ class Comic:
                 zinfo = zipfile.ZipInfo(file_name, date_time=(1980, 1, 1, 0, 0, 0))
                 zinfo.external_attr = 0o100644 << 16
                 zinfo.compress_type = zipfile.ZIP_DEFLATED
-                zipf.writestr(zinfo, file_data)
+                zipf.writestr(zinfo, file_data.getvalue())
         # 将ZIP文件保存到硬盘
         zip_buffer.seek(0)
         with open(os.path.join(download_path, f'{filename}.zip'), 'wb') as f:
