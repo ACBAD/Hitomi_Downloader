@@ -9,7 +9,7 @@ import time
 import urllib.parse
 import zipfile
 from io import BytesIO
-from typing import Union, List, Set
+from typing import Union, List, Set, Any
 import requests
 from tqdm import tqdm
 
@@ -156,7 +156,7 @@ class Comic:
             return ''
         headers = {'referer': 'https://hitomi.la' + urllib.parse.quote(self.url)}
 
-        def download_file(inner_name, inner_url):
+        def download_file(inner_name, inner_url) -> tuple[str, BytesIO]:
             response = secure_get(inner_url, header=headers)
             if response.status_code >= 500:
                 raise TimeoutError('线程数量过多')
@@ -197,6 +197,7 @@ class Comic:
         if filename is None:
             filename = str(self.id)
         # 在内存中创建一个ZIP文件
+        downloaded_files_data = sorted(downloaded_files_data, key=lambda item: item[0])
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_name, file_data in downloaded_files_data:
