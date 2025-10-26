@@ -9,7 +9,7 @@ import time
 import urllib.parse
 import zipfile
 from io import BytesIO
-from typing import Union, List
+from typing import Union, List, Set
 import requests
 from tqdm import tqdm
 
@@ -173,7 +173,7 @@ class Comic:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
                 # 提交所有的下载任务
                 futures = {executor.submit(download_file, name, url): name for name, url in self.file_urls.items()}
-                with tqdm(total=total_num, desc="Downloading", ncols=100, unit="file") as pbar:
+                with tqdm(total=total_num, desc="Downloading", unit="file") as pbar:
                     # 使用as_completed来获取任务的完成状态
                     for future in concurrent.futures.as_completed(futures):
                         name = futures[future]
@@ -188,7 +188,7 @@ class Comic:
             total_num = len(self.file_urls)
             now_num = 0
             # 使用tqdm显示进度条
-            for name, url in tqdm(self.file_urls.items(), desc="Downloading", total=total_num, ncols=100, unit="file"):
+            for name, url in tqdm(self.file_urls.items(), desc="Downloading", total=total_num, unit="file"):
                 logger.debug(f'downloading {name}')
                 downloaded_files_data.append(download_file(name, url))
                 now_num += 1
@@ -412,7 +412,7 @@ class Hitomi:
         else:
             raise ValueError(f"Error getting gallery info: {response.status_code}")
 
-    def query(self, query_string, origin_result=False, multithreading=True, ret_id=False) -> Union[List[Comic], List[int]]:
+    def query(self, query_string, origin_result=False, multithreading=True, ret_id=False) -> Union[List[Comic], Set[int]]:
         terms = urllib.parse.unquote(query_string).lower().strip().split(' ')
         results = set()
         if multithreading:
