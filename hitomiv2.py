@@ -9,10 +9,9 @@ import time
 import urllib.parse
 import zipfile
 from io import BytesIO
-from typing import Union, List, Set, Any
+from typing import Union, List, Set
 import requests
 from tqdm import tqdm
-
 from setup_logger import setup
 
 logger = setup('Hitomi')
@@ -35,6 +34,13 @@ index_versions = {
 }
 
 proxy = None
+HTTP_PROXY = None
+HTTPS_PROXY = None
+
+if os.environ.get('HTTP_PROXY', None):
+    HTTP_PROXY = os.environ.get('HTTP_PROXY', None)
+if os.environ.get('HTTPS_PROXY', None):
+    HTTPS_PROXY = os.environ.get('HTTPS_PROXY', None)
 
 
 def secure_get(get_url, header=None):
@@ -197,7 +203,7 @@ class Comic:
         if filename is None:
             filename = str(self.id)
         # 在内存中创建一个ZIP文件
-        downloaded_files_data: list[tuple[str, BytesIO]] = sorted(downloaded_files_data, key=lambda item: item[0])
+        downloaded_files_data.sort(key=lambda item: item[0])
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_name, file_data in downloaded_files_data:
@@ -495,8 +501,7 @@ if __name__ == '__main__':
             print(f'{comic_id}为非法id，退出')
             exit(0)
 
-    hitomi = Hitomi(proxy_settings={'http': 'http://127.0.0.1:10809',
-                                    'https': 'http://127.0.0.1:10809'})
+    hitomi = Hitomi(proxy_settings={'http': HTTP_PROXY, 'https': HTTP_PROXY})
     for comic_id in comic_list:
         comic = hitomi.get_comic(comic_id)
         comic.download(max_threads=5)
