@@ -46,7 +46,7 @@ if os.environ.get('HTTPS_PROXY', None):
 def secure_get(get_url, header=None):
     for itime in range(10):
         try:
-            response = requests.get(get_url, headers=header, proxies=proxy)
+            response = requests.get(get_url, headers=header, proxies=proxy, timeout=10)
             if 200 <= response.status_code < 300:
                 return response
             else:
