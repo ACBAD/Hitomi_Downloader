@@ -9,7 +9,7 @@ import time
 import urllib.parse
 import zipfile
 from io import BytesIO
-from typing import Union, List, Set, Any
+from typing import Union, List, Set
 import requests
 from tqdm import tqdm
 from setup_logger import setup
