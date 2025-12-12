@@ -6,14 +6,16 @@ import os
 import re
 import struct
 import sys
+import tempfile
 import time
 import urllib.parse
-from typing import Union, List, Set, IO, Callable, Optional, Awaitable
-import httpx
-import tempfile
-from tqdm import tqdm
-from setup_logger import get_logger
 import zipfile
+from typing import IO, Callable, Optional, Awaitable, Any
+import httpx
+from pydantic import BaseModel, Field
+from tqdm import tqdm
+
+from setup_logger import get_logger
 
 logger = get_logger('Hitomi')
 
@@ -55,7 +57,7 @@ async def robust_get(get_url: str, header=None):
         except KeyboardInterrupt:
             raise KeyboardInterrupt
         except Exception as e:
-            logger.exception('请求时发生错误', exc_info=e)
+            logger.error(f'请求时发生错误: {e}')
         await asyncio.sleep(1)
     logger.error('请求失败')
     return None
@@ -92,89 +94,116 @@ async def set_gg(add_timestamp=False):
     return m, b.group(1).strip("/"), int(d.group(1)) if d else 0
 
 
-async def decode_download_urls(info):
+class Language(BaseModel):
+    name: str
+    galleryid: int
+    language_localname: str
+    url: str
+
+
+class Parody(BaseModel):
+    # 保留原始字段名 parody，即使它是单数形式
+    parody: str
+    url: str
+
+
+class Group(BaseModel):
+    group: str
+    url: str
+
+
+class Tag(BaseModel):
+    tag: str
+    url: str
+    # 原始数据中 male/female 是 "1" 或 ""，甚至可能不存在
+    # 使用 Optional + 默认值确保健壮性
+    male: Optional[str] = ""
+    female: Optional[str] = ""
+
+
+class PageInfo(BaseModel):
+    hasavif: int
+    hash: str
+    height: int
+    width: int
+    name: str
+
+
+class Character(BaseModel):
+    character: str
+    url: str
+
+
+class Artist(BaseModel):
+    artist: str
+    url: str
+
+
+# --- 主模型定义 ---
+
+class Comic(BaseModel):
+    id: str  # 原始 JSON 中 id 为字符串类型
+    title: str
+    type: str
+    language: str
+    language_localname: str
+    date: str
+    datepublished: str
+    galleryurl: str
+    blocked: int
+    # 嵌套结构：Pydantic 会自动处理 list[Model] 的转换
+    related: list[int]
+    languages: list[Language]
+    parodys: list[Parody]
+    groups: list[Group]
+    tags: list[Tag]
+    files: list[PageInfo]
+    characters: list[Character]
+    artists: list[Artist]
+    # 可选字段 (Nullable)
+    videofilename: Optional[str] = None
+    japanese_title: Optional[str] = None
+    video: Optional[str] = None
+    # 这里的 list[Any] 用于处理空列表或未知结构的列表
+    scene_indexes: list[Any] = Field(default_factory=list)
+
+
+async def decode_download_urls(files: list[PageInfo]) -> dict[str, str]:
     gg_m, gg_b, gg_d = await set_gg()
 
     # noinspection PyUnusedLocal
-    def url_from_hash(galleryid, image, ext=None):
-        ext = ext or "webp" or image['name'].split('.').pop()
-        ihash = image["hash"]
+    def url_from_hash(galleryid, image: PageInfo, ext=None):
+        # 修改点 1: image['name'] -> image.name
+        # 注意：保留了原代码中的逻辑（虽然 'or image.name...' 这部分永远不会执行）
+        ext = ext or "webp" or image.name.split('.').pop()
+
+        # 修改点 2: image["hash"] -> image.hash
+        ihash = image.hash
+
+        # 核心逻辑保持不变
         inum = int(ihash[-1] + ihash[-3:-1], 16)
+
         url = "https://{}{}.{}/{}/{}/{}.{}".format(
-            ext[0], gg_m.get(inum, gg_d) + 1, "gold-usergeneratedcontent.net",
-            gg_b, inum, ihash, ext,
+            ext[0],
+            gg_m.get(inum, gg_d) + 1,
+            "gold-usergeneratedcontent.net",
+            gg_b,
+            inum,
+            ihash,
+            ext,
         )
 
         return url
 
     download_urls = {}
-    for file in info['files']:
-        image_name = re.sub(r'\.[^.]+$', '.webp', file['name'])
-        download_urls[image_name] = url_from_hash(info['id'], file, None)
+    for file in files:
+        # 修改点 3: file['name'] -> file.name
+        image_name = re.sub(r'\.[^.]+$', '.webp', file.name)
+
+        # 传入 Pydantic 对象 file
+        download_urls[image_name] = url_from_hash(0, file, None)
+
     return download_urls
-
-
-class Comic:
-    def __init__(self, json_info: dict):
-        self.raw_info = json_info
-        self.title = json_info['title']
-        self.authors = json_info['artists']
-        self.id = json_info['id']
-        self.url = json_info['galleryurl']
-        self.tags = json_info['tags']
-        self.parodys = json_info['parodys']
-        self.characters = json_info['characters']
-
-    def __str__(self):
-        return f'Title: {self.title} ID: {self.id} Author: {self.authors}'
-
-    async def download(self, file: IO[bytes], max_threads=1, phase_callback: Callable[[str], Awaitable[None]] = None) -> bool:
-
-        if not self.raw_info:
-            logger.warning(f'gallery_id{self.id}无效')
-            return False
-        headers = {'referer': 'https://hitomi.la' + urllib.parse.quote(self.url)}
-        pbar: Optional[tqdm] = None
-        file_urls = await decode_download_urls(self.raw_info)
-        if phase_callback is None:
-            pbar = tqdm(total=len(file_urls), desc="Downloading", unit="file")
-
-        # noinspection PyUnusedLocal
-        async def _tqdm_callback(dl_url: str):
-            pbar.update(1)
-        if phase_callback is None:
-            phase_callback = _tqdm_callback
-
-        async def download_file(url_name: str, url: str, sem_lock: asyncio.Semaphore) -> tuple[str, tempfile.SpooledTemporaryFile]:
-            async with sem_lock:
-                response = await robust_get(url, header=headers)
-                if response.status_code >= 500:
-                    raise TimeoutError('线程数量过多')
-                if not response:
-                    raise NotImplementedError('反爬虫配置可能已失效')
-                f = tempfile.SpooledTemporaryFile(max_size=1024 ** 2)
-                f.write(response.content)
-                f.seek(0)
-                await phase_callback(url)
-                return url_name, f
-
-        sem = asyncio.Semaphore(max_threads)
-        tasks = [download_file(name, url, sem) for name, url in file_urls.items()]
-        downloaded_files_data: list[tuple[str, tempfile.SpooledTemporaryFile]] = await asyncio.gather(*tasks)
-        downloaded_files_data.sort(key=lambda item: item[0])
-
-        with zipfile.ZipFile(file, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for file_name, file_data in downloaded_files_data:
-                zinfo = zipfile.ZipInfo(file_name, date_time=(1980, 1, 1, 0, 0, 0))
-                zinfo.external_attr = 0o100644 << 16
-                zinfo.compress_type = zipfile.ZIP_DEFLATED
-                zipf.writestr(zinfo, file_data.read())
-        file.seek(0)
-
-        return True
-
-    def get_tag_list(self):
-        return [tag['tag'] for tag in self.tags]
 
 
 class Hitomi:
@@ -369,7 +398,7 @@ class Hitomi:
         return await get_galleryids_from_data(data)
 
     @staticmethod
-    async def get_comic(gallery_id) -> Union[Comic, None]:
+    async def get_comic(gallery_id) -> Optional[Comic]:
         req_url = f'https://{domain}/galleries/{gallery_id}.js'
         response = await robust_get(req_url)
         if response.status_code == 404:
@@ -387,11 +416,11 @@ class Hitomi:
                 galleryinfo_dict = json.loads(json_str)
             except json.JSONDecodeError as e:
                 raise ValueError(f"Error decoding JSON: {e}")
-            return Comic(galleryinfo_dict)
+            return Comic.model_validate(galleryinfo_dict)
         else:
             raise ValueError(f"Error getting gallery info: {response.status_code}")
 
-    async def query(self, query_string, origin_result=False, ret_id=False) -> Union[List[Comic], Set[int]]:
+    async def query(self, query_string, origin_result=False, ret_id=False) -> list[Comic] | set[int]:
         terms = urllib.parse.unquote(query_string).lower().strip().split(' ')
         results = set()
         tasks = [self.get_galleryids_for_query(term) for term in terms]
@@ -448,12 +477,59 @@ class Hitomi:
         return results
 
 
+async def download_comic(comic: Comic, file: IO[bytes],
+                         max_threads=1,
+                         phase_callback: Callable[[str], Awaitable[None]] = None) -> bool:
+    if not comic.files:
+        logger.warning(f'comic has no files')
+        return False
+    headers = {'referer': 'https://hitomi.la' + urllib.parse.quote(comic.galleryurl)}
+    pbar: Optional[tqdm] = None
+    file_urls = await decode_download_urls(comic.files)
+    if phase_callback is None:
+        pbar = tqdm(total=len(file_urls), desc="Downloading", unit="file")
+
+    # noinspection PyUnusedLocal
+    async def _tqdm_callback(dl_url: str):
+        pbar.update(1)
+    if phase_callback is None:
+        phase_callback = _tqdm_callback
+    sem = asyncio.Semaphore(max_threads)
+
+    async def download_file(url_name: str, url: str) -> tuple[str, tempfile.SpooledTemporaryFile]:
+        async with sem:
+            response = await robust_get(url, header=headers)
+            if response.status_code >= 500:
+                raise TimeoutError('线程数量过多')
+            if not response:
+                raise NotImplementedError('反爬虫配置可能已失效')
+            f = tempfile.SpooledTemporaryFile(max_size=1024 ** 2)
+            f.write(response.content)
+            f.seek(0)
+            await phase_callback(url)
+            return url_name, f
+    tasks = [download_file(name, url) for name, url in file_urls.items()]
+    downloaded_files_data: list[tuple[str, tempfile.SpooledTemporaryFile]] = await asyncio.gather(*tasks)
+    downloaded_files_data.sort(key=lambda item: item[0])
+
+    # 哈希级可复现构建, 勿修改任何打包流程
+    with zipfile.ZipFile(file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for file_name, file_data in downloaded_files_data:
+            zinfo = zipfile.ZipInfo(file_name, date_time=(1980, 1, 1, 0, 0, 0))
+            zinfo.external_attr = 0o100644 << 16
+            zinfo.compress_type = zipfile.ZIP_DEFLATED
+            zipf.writestr(zinfo, file_data.read())
+    file.seek(0)
+
+    return True
+
+
 async def cli_download(hitomi: Hitomi, comic_list: list[int]):
     await hitomi.refresh_version()
     for comic_id in comic_list:
         comic = await hitomi.get_comic(comic_id_g)
         with open(f'{comic_id}.zip', 'wb') as f:
-            await comic.download(f, max_threads=5)
+            await download_comic(comic, f, max_threads=5)
 
 if __name__ == '__main__':
     if len(sys.argv) == 1:
