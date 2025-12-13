@@ -155,12 +155,12 @@ class Comic(BaseModel):
     related: list[int]
     languages: list[Language]
     parodys: list[Parody]
-    groups: list[Group]
     tags: list[Tag]
     files: list[PageInfo]
     characters: list[Character]
     artists: list[Artist]
     # 可选字段 (Nullable)
+    groups: Optional[list[Group]] = None
     videofilename: Optional[str] = None
     japanese_title: Optional[str] = None
     video: Optional[str] = None
