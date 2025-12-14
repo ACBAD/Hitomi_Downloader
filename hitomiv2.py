@@ -145,21 +145,21 @@ class Comic(BaseModel):
     id: str  # 原始 JSON 中 id 为字符串类型
     title: str
     type: str
-    language: str
-    language_localname: str
-    date: str
-    datepublished: str
-    galleryurl: str
-    blocked: int
+    language: str = ''
+    language_localname: str = ''
+    date: str = ''
+    datepublished: str = ''
+    galleryurl: str = ''
+    blocked: int = 0
     # 嵌套结构：Pydantic 会自动处理 list[Model] 的转换
-    related: list[int]
-    languages: list[Language]
-    parodys: list[Parody]
-    groups: list[Group]
-    tags: list[Tag]
+    related: list[int] = []
+    languages: list[Language] = []
+    parodys: list[Parody] = []
+    groups: list[Group] = []
+    tags: list[Tag] = []
     files: list[PageInfo]
-    characters: list[Character]
-    artists: list[Artist]
+    characters: list[Character] = []
+    artists: list[Artist] = []
     # 可选字段 (Nullable)
     videofilename: Optional[str] = None
     japanese_title: Optional[str] = None
