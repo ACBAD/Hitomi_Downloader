@@ -148,7 +148,7 @@ class Comic(BaseModel):
     language: str
     language_localname: str
     date: str
-    datepublished: str
+
     galleryurl: str
     blocked: int
     # 嵌套结构：Pydantic 会自动处理 list[Model] 的转换
@@ -160,6 +160,7 @@ class Comic(BaseModel):
     characters: Optional[list[Character]] = None
     artists: Optional[list[Artist]] = None
     # 可选字段 (Nullable)
+    datepublished: Optional[str] = None
     related: Optional[list[int]] = None
     groups: Optional[list[Group]] = None
     videofilename: Optional[str] = None
