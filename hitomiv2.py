@@ -152,20 +152,30 @@ class Comic(BaseModel):
     galleryurl: str
     blocked: int
     # 嵌套结构：Pydantic 会自动处理 list[Model] 的转换
-    related: list[int] = []
-    languages: list[Language] = []
+    languages: list[Language]
     parodys: list[Parody] = []
     tags: list[Tag] = []
     files: list[PageInfo]
     characters: list[Character] = []
     artists: list[Artist] = []
     # 可选字段 (Nullable)
+    related: Optional[list[int]] = None
     groups: Optional[list[Group]] = None
     videofilename: Optional[str] = None
     japanese_title: Optional[str] = None
     video: Optional[str] = None
     # 这里的 list[Any] 用于处理空列表或未知结构的列表
     scene_indexes: list[Any] = Field(default_factory=list)
+
+    def model_post_init(self, context: Any, /) -> None:
+        if self.parodys is None:
+            self.parodys = []
+        if self.tags is None:
+            self.tags = []
+        if self.characters is None:
+            self.characters = []
+        if self.artists is None:
+            self.artists = []
 
 
 async def decode_download_urls(files: list[PageInfo]) -> dict[str, str]:
