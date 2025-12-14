@@ -152,12 +152,13 @@ class Comic(BaseModel):
     galleryurl: str
     blocked: int
     # 嵌套结构：Pydantic 会自动处理 list[Model] 的转换
-    languages: list[Language]
-    parodys: list[Parody] = []
-    tags: list[Tag] = []
     files: list[PageInfo]
-    characters: list[Character] = []
-    artists: list[Artist] = []
+    languages: list[Language]
+    # 初始化可选
+    parodys: Optional[list[Parody]] = None
+    tags: Optional[list[Tag]] = None
+    characters: Optional[list[Character]] = None
+    artists: Optional[list[Artist]] = None
     # 可选字段 (Nullable)
     related: Optional[list[int]] = None
     groups: Optional[list[Group]] = None
