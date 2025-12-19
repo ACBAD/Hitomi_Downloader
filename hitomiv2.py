@@ -12,7 +12,7 @@ import urllib.parse
 import zipfile
 from typing import IO, Callable, Optional, Awaitable, Any
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
 
 from setup_logger import get_logger
@@ -115,10 +115,19 @@ class Group(BaseModel):
 class Tag(BaseModel):
     tag: str
     url: str
-    # 原始数据中 male/female 是 "1" 或 ""，甚至可能不存在
-    # 使用 Optional + 默认值确保健壮性
     male: Optional[str] = ""
     female: Optional[str] = ""
+
+    @field_validator('male', 'female', mode='before')
+    @classmethod
+    def coerce_int_to_str(cls, v):
+        """
+        拦截原始输入：若为 int 则强转为 str，
+        解决 tags.x.female 报错 [input_value=1, input_type=int]
+        """
+        if isinstance(v, int):
+            return str(v)
+        return v
 
 
 class PageInfo(BaseModel):
@@ -168,6 +177,18 @@ class Comic(BaseModel):
     video: Optional[str] = None
     # 这里的 list[Any] 用于处理空列表或未知结构的列表
     scene_indexes: list[Any] = Field(default_factory=list)
+
+    # 针对 id 的预处理验证器
+    @field_validator('id', mode='before')
+    @classmethod
+    def coerce_id_to_str(cls, v):
+        """
+        拦截原始输入：若为 int 则强转为 str，
+        解决 id 报错 [input_value=1441484, input_type=int]
+        """
+        if isinstance(v, int):
+            return str(v)
+        return v
 
     def model_post_init(self, context: Any, /) -> None:
         if self.parodys is None:
