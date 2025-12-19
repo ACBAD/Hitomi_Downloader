@@ -164,10 +164,10 @@ class Comic(BaseModel):
     files: list[PageInfo]
     languages: list[Language]
     # 初始化可选
-    parodys: Optional[list[Parody]] = None
-    tags: Optional[list[Tag]] = None
-    characters: Optional[list[Character]] = None
-    artists: Optional[list[Artist]] = None
+    parodys: Optional[list[Parody]] = Field(default_factory=list)
+    tags: Optional[list[Tag]] = Field(default_factory=list)
+    characters: Optional[list[Character]] = Field(default_factory=list)
+    artists: Optional[list[Artist]] = Field(default_factory=list)
     # 可选字段 (Nullable)
     datepublished: Optional[str] = None
     related: Optional[list[int]] = None
@@ -189,16 +189,6 @@ class Comic(BaseModel):
         if isinstance(v, int):
             return str(v)
         return v
-
-    def model_post_init(self, context: Any, /) -> None:
-        if self.parodys is None:
-            self.parodys = []
-        if self.tags is None:
-            self.tags = []
-        if self.characters is None:
-            self.characters = []
-        if self.artists is None:
-            self.artists = []
 
 
 async def decode_download_urls(files: list[PageInfo]) -> dict[str, str]:
