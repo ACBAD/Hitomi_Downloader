@@ -278,24 +278,21 @@ async def getComic(gallery_id) -> Optional[Comic]:
             http2=True  # 如果服务器支持 HTTP/2，速度会起飞 (可选，需安装 httpx[http2])
     ) as client:
         response = await robustGet(client, req_url)
-    if response.status_code == 404:
+    if response is None:
         return None
-    if response.status_code == 200:
-        # 使用正则表达式匹配 galleryinfo 变量的 JSON 对象
-        if 'galleryinfo' not in response.text:
-            logger.error(response.text)
-            raise ValueError("galleryinfo not found")
-        match = re.search(r'{.*', response.text, re.DOTALL)
-        # 提取匹配的 JSON 字符串
-        json_str = match.group(0)
-        # 解析 JSON 字符串为 Python 字典
-        try:
-            galleryinfo_dict = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Error decoding JSON: {e}")
-        return Comic.model_validate(galleryinfo_dict)
-    else:
-        raise ValueError(f"Error getting gallery info: {response.status_code}")
+    # 使用正则表达式匹配 galleryinfo 变量的 JSON 对象
+    if 'galleryinfo' not in response.text:
+        logger.error(response.text)
+        raise ValueError("galleryinfo not found")
+    match = re.search(r'{.*', response.text, re.DOTALL)
+    # 提取匹配的 JSON 字符串
+    json_str = match.group(0)
+    # 解析 JSON 字符串为 Python 字典
+    try:
+        galleryinfo_dict = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Error decoding JSON: {e}")
+    return Comic.model_validate(galleryinfo_dict)
 
 
 async def downloadComic(comic: Comic, file: IO[bytes],
