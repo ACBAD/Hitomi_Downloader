@@ -348,19 +348,6 @@ async def downloadComic(comic: Comic, file: IO[bytes],
     return True
 
 
-# --- 搜索功能 ---
-
-# --- 搜索结束 ---
-
-
-async def cliDownload(comic_list: list[int]):
-    await refreshVersion()
-    for comic_id in comic_list:
-        comic = await getComic(comic_id_g)
-        with open(f'{comic_id}.zip', 'wb') as f:
-            await downloadComic(comic, f, max_threads=5)
-
-
 import struct
 import hashlib
 
@@ -619,6 +606,14 @@ async def searchIDs(query: str, max_threads: int = 5) -> list[int]:
                     current_ids.difference_update(res)
     # 排序结果 (ID 越大越新)
     return sorted(list(current_ids), reverse=True)
+
+
+async def cliDownload(comic_list: list[int]):
+    await refreshVersion()
+    for comic_id in comic_list:
+        comic = await getComic(comic_id_g)
+        with open(f'{comic_id}.zip', 'wb') as f:
+            await downloadComic(comic, f, max_threads=5)
 
 
 if __name__ == '__main__':
