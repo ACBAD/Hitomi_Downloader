@@ -1,10 +1,7 @@
 import asyncio
-import hashlib
 import json
-import logging
 import os
 import re
-import struct
 import sys
 import tempfile
 import time
@@ -14,10 +11,9 @@ from typing import IO, Callable, Optional, Awaitable, Any
 import httpx
 from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
+from setup_logger import getLogger, DEBUG_LEVEL, INFO_LEVEL
 
-from setup_logger import get_logger
-
-logger = get_logger('Hitomi')
+logger, setLoggerLevel, _ = getLogger('Hitomi')
 
 domain = 'ltn.gold-usergeneratedcontent.net'
 galleryblockextension = '.html'
@@ -38,59 +34,74 @@ index_versions = {
 
 proxy = None
 HTTP_PROXY = None
+debug = False
 
 if os.environ.get('HTTP_PROXY', None):
     HTTP_PROXY = os.environ.get('HTTP_PROXY', None)
+    proxy = HTTP_PROXY
 
 
-async def robust_get(get_url: str, header=None):
+def setProxy(http_proxy_url: str):
+    global proxy
+    proxy = http_proxy_url
+
+
+def setDebug(target_state: bool = None):
+    global debug
+    if target_state is None:
+        debug = not debug
+    else:
+        debug = target_state
+    if debug:
+        setLoggerLevel(DEBUG_LEVEL)
+    else:
+        setLoggerLevel(INFO_LEVEL)
+    return debug
+
+
+search_cache = {}
+
+
+async def robustGet(client: httpx.AsyncClient, get_url: str, header=None):
     logger.debug(f'请求 {get_url}')
     for itime in range(10):
         try:
-            async with httpx.AsyncClient(proxy=proxy, timeout=10, max_redirects=50) as client:
-                response = await client.get(get_url, headers=header)
+            response = await client.get(get_url, headers=header)
             if 200 <= response.status_code < 300:
                 return response
+            elif response.status_code == 404:
+                return None
             else:
-                if itime > 5:
+                if itime > 2:
                     logger.warning(f'服务器返回{response.status_code}，当前次数 {itime}')
-        except KeyboardInterrupt:
-            raise KeyboardInterrupt
         except Exception as e:
-            logger.error(f'请求时发生错误: {e}')
-        await asyncio.sleep(1)
-    logger.error('请求失败')
+            logger.warning(f'请求错误: {type(e)}:{e}')
+        await asyncio.sleep(0.5 * (itime + 1))
     return None
 
 
-async def set_gg(add_timestamp=False):
+async def setGG(client: httpx.AsyncClient, add_timestamp=False):
     if add_timestamp:
         gg_url = f'https://ltn.gold-usergeneratedcontent.net/gg.js?_={int(time.time() * 1000)}'
     else:
         gg_url = 'https://ltn.gold-usergeneratedcontent.net/gg.js?'
-    gg_resp = (await robust_get(gg_url)).text
-
+    gg_resp = (await robustGet(client, gg_url)).text
     m = {}
-
     keys = []
     for match in re.finditer(
             r"case\s+(\d+):(?:\s*o\s*=\s*(\d+))?", gg_resp):
         key, value = match.groups()
         keys.append(int(key))
-
         if value:
             value = int(value)
             for key in keys:
                 m[key] = value
             keys.clear()
-
     for match in re.finditer(
             r"if\s+\(g\s*===?\s*(\d+)\)[\s{]*o\s*=\s*(\d+)", gg_resp):
         m[int(match.group(1))] = int(match.group(2))
-
     d = re.search(r"(?:var\s|default:)\s*o\s*=\s*(\d+)", gg_resp)
     b = re.search(r"b:\s*[\"'](.+)[\"']", gg_resp)
-
     return m, b.group(1).strip("/"), int(d.group(1)) if d else 0
 
 
@@ -191,21 +202,26 @@ class Comic(BaseModel):
         return v
 
 
-async def decode_download_urls(files: list[PageInfo]) -> dict[str, str]:
-    gg_m, gg_b, gg_d = await set_gg()
+async def decodeDownloadUrls(files: list[PageInfo]) -> dict[str, str]:
+    limits = httpx.Limits(max_keepalive_connections=5, max_connections=5)
+    async with httpx.AsyncClient(
+            proxy=proxy,
+            timeout=5,
+            limits=limits,
+            verify=False,  # 如果为了极致速度且信任环境，可关闭 verify (可选)
+            http2=True  # 如果服务器支持 HTTP/2，速度会起飞 (可选，需安装 httpx[http2])
+    ) as client:
+        gg_m, gg_b, gg_d = await setGG(client)
 
     # noinspection PyUnusedLocal
-    def url_from_hash(galleryid, image: PageInfo, ext=None):
+    def url2hash(galleryid, image: PageInfo, ext=None):
         # 修改点 1: image['name'] -> image.name
         # 注意：保留了原代码中的逻辑（虽然 'or image.name...' 这部分永远不会执行）
         ext = ext or "webp" or image.name.split('.').pop()
-
         # 修改点 2: image["hash"] -> image.hash
         ihash = image.hash
-
         # 核心逻辑保持不变
         inum = int(ihash[-1] + ihash[-3:-1], 16)
-
         url = "https://{}{}.{}/{}/{}/{}.{}".format(
             ext[0],
             gg_m.get(inum, gg_d) + 1,
@@ -215,300 +231,82 @@ async def decode_download_urls(files: list[PageInfo]) -> dict[str, str]:
             ihash,
             ext,
         )
-
         return url
-
     download_urls = {}
     for file in files:
         # 修改点 3: file['name'] -> file.name
         image_name = re.sub(r'\.[^.]+$', '.webp', file.name)
-
         # 传入 Pydantic 对象 file
-        download_urls[image_name] = url_from_hash(0, file, None)
-
+        download_urls[image_name] = url2hash(0, file, None)
     return download_urls
 
 
-class Hitomi:
-    def __init__(self, proxy_settings=None, debug_fmt=False):
-        global proxy
-        self.debug = debug_fmt
-        if self.debug:
-            for handler in logger.handlers:
-                if isinstance(handler, logging.StreamHandler):
-                    handler.setLevel(logging.DEBUG)
-        proxy = proxy_settings
-
-    @staticmethod
-    async def refresh_version():
-        for version_name, version in index_versions.items():
-            if version_name == index_dir:
-                continue
-            url = f'https://{domain}/{version_name}/version?_={int(time.time() * 1000)}'
-            logger.debug(f'请求url: {url}')
-            response = await robust_get(url)
-            version = response.text
-            if not version:
-                logger.error(f'refresh_versions: getting {version_name} failed')
-            else:
-                logger.debug(f'{version_name}:{version}')
-                index_versions[version_name] = version
-                break
-            if version == '':
-                raise ConnectionError(f'{version_name} failed totally')
-
-    @staticmethod
-    async def get_url_at_range(url, inner_range):
-        logger.debug(inner_range)
-        for _ in range(10):
-            headers = {
-                'Range': f'bytes={inner_range[0]}-{inner_range[1]}'
-            }
-            response = await robust_get(url, header=headers)
-            if response.status_code == 200 or response.status_code == 206:
-                return response.content
-            elif response.status_code == 503:
-                logger.warning(f'503 error in getting indexes, now:{_}')
-                await asyncio.sleep(2)
-            else:
-                raise Exception(
-                    f"get_url_at_range({url}, {inner_range}) failed, response.status_code: {response.status_code}")
-        raise ConnectionError('重试次数过多')
-
-    async def get_node_at_address(self, field, address):
-        max_node_size = 464
-
-        async def decode_node(data):
-            b_size = 16
-            if not data:
-                return None
-            node = {
-                'keys': [],
-                'datas': [],
-                'subnode_addresses': [],
-            }
-            pos = 0
-            number_of_keys, = struct.unpack_from('>I', data, pos)
-            pos += 4
-            keys = []
-            for _ in range(number_of_keys):
-                key_size, = struct.unpack_from('>I', data, pos)
-                if not key_size or key_size > 32:
-                    raise ValueError("fatal: !key_size || key_size > 32")
-                pos += 4
-                key = data[pos:pos + key_size]
-                keys.append(key)
-                pos += key_size
-            number_of_datas, = struct.unpack_from('>I', data, pos)
-            pos += 4
-            datas = []
-            for _ in range(number_of_datas):
-                offset, = struct.unpack_from('>Q', data, pos)
-                pos += 8
-                length, = struct.unpack_from('>I', data, pos)
-                pos += 4
-                datas.append((offset, length))
-            number_of_subnode_addresses = b_size + 1
-            subnode_addresses = []
-            for _ in range(number_of_subnode_addresses):
-                subnode_address, = struct.unpack_from('>Q', data, pos)
-                pos += 8
-                subnode_addresses.append(subnode_address)
-            node['keys'] = keys
-            node['datas'] = datas
-            node['subnode_addresses'] = subnode_addresses
-            return node
-
-        url = f'http://{domain}/{index_dir}/{field}.{index_versions[index_dir]}.index'
-        if field == 'galleries':
-            url = f'http://{domain}/{galleries_index_dir}/galleries.{index_versions[galleries_index_dir]}.index'
-        elif field == 'languages':
-            url = f'http://{domain}/{languages_index_dir}/languages.{index_versions[languages_index_dir]}.index'
-        elif field == 'nozomiurl':
-            url = f'http://{domain}/{nozomiurl_index_dir}/nozomiurl.{index_versions[nozomiurl_index_dir]}.index'
-        nodedata = await self.get_url_at_range(url, [address, address + max_node_size - 1])
-        return await decode_node(nodedata)
-
-    async def b_search(self, field, key, node):
-        logger.debug('b树搜索')
-
-        def compare_arraybuffers(dv1, dv2):
-            top = min(len(dv1), len(dv2))
-            for i in range(top):
-                if dv1[i] < dv2[i]:
-                    return -1
-                elif dv1[i] > dv2[i]:
-                    return 1
-            return 0
-
-        def locate_key(inner_key, inner_node):
-            cmp_result = -1
-            i = 0
-            flag = True
-            for i in range(len(inner_node['keys'])):
-                cmp_result = compare_arraybuffers(inner_key, inner_node['keys'][i])
-                if cmp_result <= 0:
-                    logger.debug(inner_key, inner_node)
-                    flag = False
-                    break
-            return [cmp_result == 0, i + 1 if flag else i]
-
-        def is_leaf(inner_node):
-            return all(addr == 0 for addr in inner_node['subnode_addresses'])
-
-        if not node:
-            raise NotImplementedError('index_versions已过期')
-        if not node['keys']:  # special case for empty root
-            raise NotImplementedError('index_versions已过期')
-        there, where = locate_key(key, node)
-        if there:
-            return node['datas'][where]
-        elif is_leaf(node):
-            # raise NotImplementedError('index_versions已过期')
-            logger.debug('reach node leaf, perheps error')
-            return None
-        if node['subnode_addresses'][where] == 0:
-            # raise NotImplementedError('index_versions已过期')
-            logger.debug('reach node leaf, perheps error')
-            return None
-        logger.debug(f'subnode_addresses: {node["subnode_addresses"]}')
-        subnode_address = node['subnode_addresses'][where]
-        logger.debug(f'where:{where}, subnode_address:{subnode_address}')
-        subnode = await self.get_node_at_address(field, subnode_address)
-        return self.b_search(field, key, subnode)
-
-    async def get_galleryids_for_query(self, inner_query) -> set:
-        async def get_galleryids_from_data(inner_data) -> set:
-            galleryids = set()
-            if not inner_data:
-                return galleryids
-            url = f'http://{domain}/{galleries_index_dir}/galleries.{index_versions[galleries_index_dir]}.data'
-            offset, length = inner_data
-            if length > 100000000 or length <= 0:
-                logger.error(f"results length {length} is too long")
-                return galleryids
-            inbuf = await self.get_url_at_range(url, [offset, offset + length - 1])
-            if not inbuf:
-                return galleryids
-            pos = 0
-            number_of_galleryids = struct.unpack_from('>I', inbuf, pos)[0]  # big-endian int32
-            pos += 4
-            expected_length = number_of_galleryids * 4 + 4
-            if number_of_galleryids > 10000000 or number_of_galleryids <= 0:
-                logger.error(f"number_of_galleryids {number_of_galleryids} is too long")
-                return galleryids
-            elif len(inbuf) != expected_length:
-                logger.error(f"inbuf.byteLength {len(inbuf)} !== expected_length {expected_length}")
-                return galleryids
-            for _ in range(number_of_galleryids):
-                galleryid = struct.unpack_from('>I', inbuf, pos)[0]  # big-endian int32
-                galleryids.add(galleryid)
-                pos += 4
-            return galleryids
-
-        inner_query = inner_query.replace('_', ' ')
-
-        key = hashlib.sha256(inner_query.encode()).digest()[:4]
-        field = 'galleries'
-        node = await self.get_node_at_address(field, 0)
-        if not node:
-            logger.error('not node')
-            return set()
-        data = self.b_search(field, key, node)
-        if not data:
-            logger.debug('not data')
-            return set()
-        return await get_galleryids_from_data(data)
-
-    @staticmethod
-    async def get_comic(gallery_id) -> Optional[Comic]:
-        req_url = f'https://{domain}/galleries/{gallery_id}.js'
-        response = await robust_get(req_url)
-        if response.status_code == 404:
-            return None
-        if response.status_code == 200:
-            # 使用正则表达式匹配 galleryinfo 变量的 JSON 对象
-            if 'galleryinfo' not in response.text:
-                logger.error(response.text)
-                raise ValueError("galleryinfo not found")
-            match = re.search(r'{.*', response.text, re.DOTALL)
-            # 提取匹配的 JSON 字符串
-            json_str = match.group(0)
-            # 解析 JSON 字符串为 Python 字典
-            try:
-                galleryinfo_dict = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Error decoding JSON: {e}")
-            return Comic.model_validate(galleryinfo_dict)
+async def refreshVersion():
+    for version_name, version in index_versions.items():
+        if version_name == index_dir:
+            continue
+        url = f'https://{domain}/{version_name}/version?_={int(time.time() * 1000)}'
+        logger.debug(f'请求url: {url}')
+        limits = httpx.Limits(max_keepalive_connections=20, max_connections=20)
+        async with httpx.AsyncClient(
+                proxy=proxy,
+                timeout=20,
+                limits=limits,
+                verify=False,  # 如果为了极致速度且信任环境，可关闭 verify (可选)
+                http2=True  # 如果服务器支持 HTTP/2，速度会起飞 (可选，需安装 httpx[http2])
+        ) as client:
+            response = await robustGet(client, url)
+        version = response.text
+        if not version:
+            logger.error(f'refresh_versions: getting {version_name} failed')
         else:
-            raise ValueError(f"Error getting gallery info: {response.status_code}")
-
-    async def query(self, query_string, origin_result=False, ret_id=False) -> list[Comic] | set[int]:
-        terms = urllib.parse.unquote(query_string).lower().strip().split(' ')
-        results = set()
-        tasks = [self.get_galleryids_for_query(term) for term in terms]
-        search_results = await asyncio.gather(*tasks)
-        for search_result in search_results:
-            if not results:
-                results = search_result.copy()
-            else:
-                results = results & search_result
-
-        logger.info(f'正向搜索结果数{len(results)}')
-
-        async def get_galleryids_from_nozomi(nozomi_state):
-            if nozomi_state['orderby'] != 'date' or nozomi_state['orderbykey'] == 'published':
-                if nozomi_state['area'] == 'all':
-                    url = (
-                        f"//{domain}/{nozomi_state['orderby']}/{nozomi_state['orderbykey']}-{nozomi_state['language']}"
-                        f"{nozomiextension}")
-                else:
-                    url = (f"//{domain}/{nozomi_state['area']}/{nozomi_state['orderby']}/{nozomi_state['orderbykey']}/"
-                           f"{nozomi_state['tag']}-{nozomi_state['language']}{nozomiextension}")
-            elif nozomi_state['area'] == 'all':
-                url = f"//{domain}/{nozomi_state['tag']}-{nozomi_state['language']}{nozomiextension}"
-            else:
-                url = f"//{domain}/{nozomi_state['area']}/{nozomi_state['tag']}-{nozomi_state['language']}{nozomiextension}"
-            response = await robust_get(f'http:{url}')
-            nozomi: set = set()
-            if response.status_code == 200:
-                array_buffer = response.content
-                total = len(array_buffer) // 4
-                for i in range(total):
-                    nozomi.add(struct.unpack('>I', array_buffer[i * 4:(i + 1) * 4])[0])
-            return nozomi
-
-        final_result_ids = results
-
-        if not origin_result:
-            inner_state = {
-                'area': 'all',
-                'tag': 'index',
-                'language': 'chinese',
-                'orderby': 'date',
-                'orderbykey': 'added',
-                'orderbydirection': 'desc'
-            }
-            initial_result = await get_galleryids_from_nozomi(inner_state)
-            logger.info(f'偏好过滤结果数{len(initial_result)}')
-            final_result_ids = {gallery for gallery in initial_result if gallery in results}
-        if ret_id:
-            return final_result_ids
-        results = []
-        for icomic_id in final_result_ids:
-            results.append(self.get_comic(icomic_id))
-        return results
+            logger.debug(f'{version_name}:{version}')
+            index_versions[version_name] = version
+            break
+        if version == '':
+            raise ConnectionError(f'{version_name} failed totally')
 
 
-async def download_comic(comic: Comic, file: IO[bytes],
-                         max_threads=1,
-                         phase_callback: Callable[[str], Awaitable[None]] = None) -> bool:
+async def getComic(gallery_id) -> Optional[Comic]:
+    req_url = f'https://{domain}/galleries/{gallery_id}.js'
+    limits = httpx.Limits(max_keepalive_connections=20, max_connections=20)
+    async with httpx.AsyncClient(
+            proxy=proxy,
+            timeout=20,
+            limits=limits,
+            verify=False,  # 如果为了极致速度且信任环境，可关闭 verify (可选)
+            http2=True  # 如果服务器支持 HTTP/2，速度会起飞 (可选，需安装 httpx[http2])
+    ) as client:
+        response = await robustGet(client, req_url)
+    if response.status_code == 404:
+        return None
+    if response.status_code == 200:
+        # 使用正则表达式匹配 galleryinfo 变量的 JSON 对象
+        if 'galleryinfo' not in response.text:
+            logger.error(response.text)
+            raise ValueError("galleryinfo not found")
+        match = re.search(r'{.*', response.text, re.DOTALL)
+        # 提取匹配的 JSON 字符串
+        json_str = match.group(0)
+        # 解析 JSON 字符串为 Python 字典
+        try:
+            galleryinfo_dict = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Error decoding JSON: {e}")
+        return Comic.model_validate(galleryinfo_dict)
+    else:
+        raise ValueError(f"Error getting gallery info: {response.status_code}")
+
+
+async def downloadComic(comic: Comic, file: IO[bytes],
+                        max_threads=5,
+                        phase_callback: Callable[[str], Awaitable[None]] = None) -> bool:
     if not comic.files:
         logger.warning(f'comic has no files')
         return False
     headers = {'referer': 'https://hitomi.la' + urllib.parse.quote(comic.galleryurl)}
     pbar: Optional[tqdm] = None
-    file_urls = await decode_download_urls(comic.files)
+    file_urls = await decodeDownloadUrls(comic.files)
     if phase_callback is None:
         pbar = tqdm(total=len(file_urls), desc="Downloading", unit="file")
 
@@ -519,20 +317,24 @@ async def download_comic(comic: Comic, file: IO[bytes],
         phase_callback = _tqdm_callback
     sem = asyncio.Semaphore(max_threads)
 
-    async def download_file(url_name: str, url: str) -> tuple[str, tempfile.SpooledTemporaryFile]:
-        async with sem:
-            response = await robust_get(url, header=headers)
-            if response.status_code >= 500:
-                raise TimeoutError('线程数量过多')
-            if not response:
-                raise NotImplementedError('反爬虫配置可能已失效')
+    async def download_file(_sem: asyncio.Semaphore, client: httpx.AsyncClient, url_name: str, url: str) -> tuple[str, tempfile.SpooledTemporaryFile]:
+        async with _sem:
+            response = await robustGet(client, url, header=headers)
             f = tempfile.SpooledTemporaryFile(max_size=1024 ** 2)
             f.write(response.content)
             f.seek(0)
             await phase_callback(url)
             return url_name, f
-    tasks = [download_file(name, url) for name, url in file_urls.items()]
-    downloaded_files_data: list[tuple[str, tempfile.SpooledTemporaryFile]] = await asyncio.gather(*tasks)
+
+    limits = httpx.Limits(max_keepalive_connections=max_threads, max_connections=max_threads)
+    async with httpx.AsyncClient(
+            proxy=proxy,
+            timeout=5,
+            limits=limits,
+            http2=True  # 如果服务器支持 HTTP/2，速度会起飞 (可选，需安装 httpx[http2])
+    ) as client_o:
+        tasks = [download_file(sem, client_o, name, url) for name, url in file_urls.items()]
+        downloaded_files_data: list[tuple[str, tempfile.SpooledTemporaryFile]] = await asyncio.gather(*tasks)
     downloaded_files_data.sort(key=lambda item: item[0])
 
     # 哈希级可复现构建, 勿修改任何打包流程
@@ -543,16 +345,281 @@ async def download_comic(comic: Comic, file: IO[bytes],
             zinfo.compress_type = zipfile.ZIP_DEFLATED
             zipf.writestr(zinfo, file_data.read())
     file.seek(0)
-
     return True
 
 
-async def cli_download(hitomi: Hitomi, comic_list: list[int]):
-    await hitomi.refresh_version()
+# --- 搜索功能 ---
+
+# --- 搜索结束 ---
+
+
+async def cliDownload(comic_list: list[int]):
+    await refreshVersion()
     for comic_id in comic_list:
-        comic = await hitomi.get_comic(comic_id_g)
+        comic = await getComic(comic_id_g)
         with open(f'{comic_id}.zip', 'wb') as f:
-            await download_comic(comic, f, max_threads=5)
+            await downloadComic(comic, f, max_threads=5)
+
+
+import struct
+import hashlib
+
+# ================= 核心配置与工具函数 =================
+
+# B-Tree 分支因子 (Hitomi 默认为 16)
+B = 16
+
+
+async def get_bytes(client: httpx.AsyncClient, url: str, start: int, length: int) -> bytes:
+    """基于 robustGet 的 Range 请求封装"""
+    end = start + length - 1
+    headers = {'Range': f'bytes={start}-{end}', 'Referer': 'https://hitomi.la/'}
+    logger.debug(f'正在向 {url} 请求 {start} 到 {end} 的数据')
+    resp = await robustGet(client, f"https://{domain}/{url}", header=headers)
+    if resp and resp.status_code in [200, 206]:
+        return resp.content
+    return b''
+
+
+def hash_term(term: str) -> bytes:
+    """计算搜索词的 SHA-256 哈希（前4字节）"""
+    sha = hashlib.sha256()
+    sha.update(term.encode('utf-8'))
+    return sha.digest()[:4]
+
+
+# ================= B-Tree 与 索引解析类 =================
+
+class BTreeNode:
+    def __init__(self, data: bytes):
+        self.keys: list[bytes] = []
+        self.datas: list[tuple[int, int]] = []  # (offset, length)
+        self.subnode_addrs: list[int] = []
+        self._parse(data)
+
+    def _parse(self, data: bytes):
+        view = memoryview(data)
+        pos = 0
+        # 1. 解析 Keys
+        num_keys = struct.unpack('>i', view[pos:pos + 4])[0]
+        pos += 4
+        for _ in range(num_keys):
+            key_size = struct.unpack('>i', view[pos:pos + 4])[0]
+            pos += 4
+            key = view[pos:pos + key_size].tobytes()
+            self.keys.append(key)
+            pos += key_size
+        # 2. 解析 Datas (Offset/Length)
+        num_datas = struct.unpack('>i', view[pos:pos + 4])[0]
+        pos += 4
+        for _ in range(num_datas):
+            offset = struct.unpack('>Q', view[pos:pos + 8])[0]
+            pos += 8
+            length = struct.unpack('>i', view[pos:pos + 4])[0]
+            pos += 4
+            self.datas.append((offset, length))
+        # 3. 解析子节点地址
+        num_subnodes = B + 1
+        for _ in range(num_subnodes):
+            addr = struct.unpack('>Q', view[pos:pos + 8])[0]
+            pos += 8
+            self.subnode_addrs.append(addr)
+
+
+async def b_search_recursive(client: httpx.AsyncClient, key: bytes, node_addr: int = 0) -> Optional[tuple[int, int]]:
+    """递归遍历远程 B-Tree"""
+    version = index_versions[galleries_index_dir]
+    index_url = f"{galleries_index_dir}/galleries.{version}.index"
+    logger.debug(f'对 key: {key} node_addr: {node_addr} 执行b树搜索')
+    # 读取节点头 (4KB 通常足够包含一个节点)
+    node_data = await get_bytes(client, index_url, node_addr, 4096)
+    if not node_data:
+        return None
+    node = BTreeNode(node_data)
+    # 比较 Key
+    idx = 0
+    found = False
+    for i, k in enumerate(node.keys):
+        if key < k:
+            idx = i
+            break
+        elif key == k:
+            idx = i
+            found = True
+            break
+        else:
+            idx = i + 1
+    if found:
+        return node.datas[idx]
+    # 如果是叶子节点且没找到
+    if all(addr == 0 for addr in node.subnode_addrs):
+        return None
+    sub_addr = node.subnode_addrs[idx]
+    if sub_addr == 0:
+        return None
+    return await b_search_recursive(client, key, sub_addr)
+
+
+async def get_ids_from_data(client: httpx.AsyncClient, offset: int, length: int) -> set[int]:
+    """从 .data 文件读取 ID 列表"""
+    logger.debug(f'正在获取 offset: {offset}, length: {length} 的数据')
+    version = index_versions[galleries_index_dir]
+    data_url = f"{galleries_index_dir}/galleries.{version}.data"
+    raw_data = await get_bytes(client, data_url, offset, length)
+    if not raw_data:
+        return set()
+    # 解析 int32 数组: [count, id1, id2, ...]
+    count = struct.unpack('>i', raw_data[0:4])[0]
+    ids = set()
+    for i in range(count):
+        start = 4 + i * 4
+        gid = struct.unpack('>i', raw_data[start: start + 4])[0]
+        ids.add(gid)
+    return ids
+
+
+async def get_ids_from_nozomi(client: httpx.AsyncClient, subpath: str) -> set[int]:
+    """解析 .nozomi 文件 (纯 ID 列表)"""
+    logger.debug(f'对 {subpath} 发起 nozomi 请求')
+    url = f"nozomi/{subpath}.nozomi"
+    # 请求头中需要设置正确的 Referer，否则可能 403
+    headers = {'Referer': 'https://hitomi.la/'}
+    resp = await robustGet(client, f"https://{domain}/{url}", header=headers)
+    if not resp or resp.status_code != 200:
+        return set()
+    data = resp.content
+    total_ids = len(data) // 4
+    ids = set()
+    for i in range(total_ids):
+        gid = struct.unpack('>i', data[i * 4: (i + 1) * 4])[0]
+        ids.add(gid)
+    return ids
+
+
+# ================= 搜索逻辑 =================
+
+async def search_single_term(client: httpx.AsyncClient, term: str) -> set[int]:
+    """处理单个搜索词（包含 Tag 映射逻辑）"""
+    term = term.replace('_', ' ')
+    # 1. 处理命名空间 Tag (例如: female:big_breasts)
+    if ':' in term:
+        logger.debug(f'处理命名空间 Tag: {term}')
+        left, right = term.split(':', 1)
+        # 根据 search.js 的 nozomi 映射规则
+        if left in ['female', 'male']:
+            return await get_ids_from_nozomi(client, f"tag/{left}-{right}-all")
+        elif left == 'language':
+            return await get_ids_from_nozomi(client, f"index-{right}-all")
+        elif left in ['artist', 'character', 'series', 'group']:
+            return await get_ids_from_nozomi(client, f"{left}/{left}-{right}-all")
+        elif left == 'type':  # e.g. type:manga
+            return await get_ids_from_nozomi(client, f"type/{right}-all")
+    # 2. 普通文本搜索 (B-Tree)
+    logger.debug(f'处理单词: {term}')
+    key = hash_term(term)
+    data_ptr = await b_search_recursive(client, key, 0)
+    if data_ptr:
+        offset, length = data_ptr
+        return await get_ids_from_data(client, offset, length)
+    logger.debug(f'单词 {term} 未检索到任何结果')
+    return set()
+
+
+async def searchIDs(query: str, max_threads: int = 5) -> list[int]:
+    """
+        主搜索入口 (全并行优化版)
+        """
+    logger.info(f"搜索: {query}")
+    terms = query.lower().strip().split()
+    positive_terms = []
+    negative_terms = []
+    or_groups = [[]]
+    # 1. 词法解析
+    for i, term in enumerate(terms):
+        if term == 'or':
+            continue
+        is_prev_or = (i > 0 and terms[i - 1] == 'or')
+        is_next_or = (i + 1 < len(terms) and terms[i + 1] == 'or')
+        if is_prev_or or is_next_or:
+            or_groups[-1].append(term)
+            if not is_next_or:
+                or_groups.append([])
+            continue
+        if term.startswith('-'):
+            negative_terms.append(term[1:])
+        else:
+            positive_terms.append(term)
+    or_groups = [g for g in or_groups if g]
+    # 注意：在并行模式下，"将带冒号的 term 提到最前" 的排序不再影响网络请求顺序，
+    # 但仍有助于后续集合运算时的某种微小确定性，故保留。
+    positive_terms.sort(key=lambda x: 0 if ':' in x else 1)
+    current_ids = set()
+    first_round = True
+    # ================= 执行搜索逻辑 (全并行化) =================
+    # 1. 构建所有并行任务 (Tasks Construction)
+    # 我们将 OR 组的处理、AND 词的处理、NOT 词的处理全部放入任务池
+    # 1.1 OR 组任务
+    # 每个 OR 组内部是并行的，组与组之间我们也希望并行获取数据
+    or_tasks = []
+    limits = httpx.Limits(max_keepalive_connections=max_threads, max_connections=max_threads)
+    async with httpx.AsyncClient(
+            proxy=proxy,
+            timeout=5,
+            limits=limits,
+            verify=False,  # 如果为了极致速度且信任环境，可关闭 verify (可选)
+            http2=True  # 如果服务器支持 HTTP/2，速度会起飞 (可选，需安装 httpx[http2])
+    ) as client:
+        for group in or_groups:
+            # 对每个组创建一个 gather 任务
+            or_tasks.append(asyncio.gather(*[search_single_term(client, t) for t in group]))
+        # 1.2 AND 词任务
+        and_tasks = [search_single_term(client, t) for t in positive_terms]
+        # 1.3 NOT 词任务
+        not_tasks = [search_single_term(client, t) for t in negative_terms]
+        # ================= 等待数据返回 (Await I/O) =================
+        # 这里我们分阶段 await，以便于逻辑处理，但 request 已经在此时可以并发发出
+        # 若追求极致，可以使用 asyncio.gather 将所有 task 一起发出，但这会使结果处理逻辑变得复杂
+        # 鉴于 or_groups 较少见，我们优先并行化 and_tasks
+        # A. 处理 OR 组 (如果存在)
+        if or_tasks:
+            # group_results_list 是一个列表，每个元素是该组内所有 term 的结果列表
+            group_results_list = await asyncio.gather(*or_tasks)
+            for group_results in group_results_list:
+                # 组内取并集 (Union)
+                group_union = set()
+                for res in group_results:
+                    group_union.update(res)
+                # 组间取交集 (Intersection)
+                if first_round:
+                    current_ids = group_union
+                    first_round = False
+                else:
+                    current_ids.intersection_update(group_union)
+        # B. 处理 AND 词 (正向筛选)
+        if and_tasks:
+            # === 关键修改：此处通过 gather 并行执行所有 AND 词的搜索 ===
+            and_results = await asyncio.gather(*and_tasks)
+            for res in and_results:
+                if first_round:
+                    current_ids = res
+                    first_round = False
+                else:
+                    # 剪枝：如果已经为空，就没必要继续交集运算了
+                    if not current_ids:
+                        break
+                    current_ids.intersection_update(res)
+        # C. 处理 NOT 词 (负向筛选)
+        if not_tasks and (current_ids or first_round):
+            # 注意：如果 current_ids 为空且 first_round 为 True (即只有排除词)，
+            # 逻辑上应该返回全集减去排除词。但 Hitomi 默认行为通常是不给全集的。
+            # 这里维持原逻辑：只在有结果时进行排除。
+            not_results = await asyncio.gather(*not_tasks)
+            for res in not_results:
+                if current_ids:
+                    current_ids.difference_update(res)
+    # 排序结果 (ID 越大越新)
+    return sorted(list(current_ids), reverse=True)
+
 
 if __name__ == '__main__':
     if len(sys.argv) == 1:
@@ -567,5 +634,4 @@ if __name__ == '__main__':
             exit(0)
         comic_list_g.append(int(comic_id_g))
 
-    hitomi_g = Hitomi(proxy_settings=HTTP_PROXY)
-    asyncio.run(cli_download(hitomi_g, comic_list_g))
+    asyncio.run(cliDownload(comic_list_g))

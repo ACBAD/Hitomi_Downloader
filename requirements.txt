@@ -1,5 +1,5 @@
 requests
 colorlog
 tqdm
-httpx
+httpx[http2]
 pydantic
