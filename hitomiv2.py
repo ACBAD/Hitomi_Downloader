@@ -2,7 +2,6 @@ import asyncio
 import json
 import os
 import re
-import sys
 import tempfile
 import time
 import urllib.parse
@@ -32,18 +31,20 @@ index_versions = {
     nozomiurl_index_dir: ''
 }
 
-proxy = None
-HTTP_PROXY = None
 debug = False
 
-if os.environ.get('HTTP_PROXY', None):
-    HTTP_PROXY = os.environ.get('HTTP_PROXY', None)
-    proxy = HTTP_PROXY
+proxy_var = (os.environ.get('http_proxy', None) or os.environ.get('HTTP_PROXY', None)
+             or os.environ.get('HTTPS_PROXY', None) or os.environ.get('https_proxy', None))
+proxy: httpx.Proxy | None = None
+
+if proxy_var:
+    proxy = httpx.Proxy(proxy_var)
+    logger.info(f'正在使用代理: {proxy}')
 
 
 def setProxy(http_proxy_url: str):
     global proxy
-    proxy = http_proxy_url
+    proxy = httpx.Proxy(http_proxy_url)
 
 
 def setDebug(target_state: bool = None):
@@ -608,22 +609,38 @@ async def searchIDs(query: str, max_threads: int = 5) -> list[int]:
 async def cliDownload(comic_list: list[int]):
     await refreshVersion()
     for comic_id in comic_list:
-        comic = await getComic(comic_id_g)
+        comic = await getComic(comic_id)
         with open(f'{comic_id}.zip', 'wb') as f:
             await downloadComic(comic, f, max_threads=5)
 
 
-if __name__ == '__main__':
-    if len(sys.argv) == 1:
-        print('直接将id作为参数以下载')
-        exit(0)
-    arg_list_g = sys.argv
-    del arg_list_g[0]
-    comic_list_g = []
-    for comic_id_g in arg_list_g:
-        if not comic_id_g.isdigit():
-            print(f'{comic_id_g}为非法id，退出')
-            exit(0)
-        comic_list_g.append(int(comic_id_g))
+async def cliSearch(search_string: str):
+    print(await searchIDs(search_string))
 
-    asyncio.run(cliDownload(comic_list_g))
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Hitomi CLI')
+    parser.add_argument('-p', '--proxy',
+                        dest='proxy',
+                        type=str,
+                        help='设置代理')
+    arg_group = parser.add_mutually_exclusive_group(required=True)
+    arg_group.add_argument('-d', '--download',
+                           dest="comic_ids",
+                           type=int,
+                           nargs='+',
+                           help='下载comic')
+    arg_group.add_argument('-s', '--search',
+                           dest='search_str',
+                           type=str,
+                           help='搜索comic')
+    args = parser.parse_args()
+    if args.proxy:
+        logger.info(f'正在使用代理: {args.proxy}')
+        setProxy(args.proxy)
+    asyncio.run(refreshVersion())
+    if args.comic_ids:
+        asyncio.run(cliDownload(args.comic_ids))
+    else:
+        asyncio.run(cliSearch(args.search_str))
