@@ -6,7 +6,7 @@ import tempfile
 import time
 import urllib.parse
 import zipfile
-from typing import IO, Callable, Optional, Awaitable, Any
+from typing import IO, Callable, Optional, Awaitable, Any, cast
 import httpx
 from pydantic import BaseModel, Field, field_validator
 from tqdm import tqdm
@@ -74,7 +74,7 @@ async def robustGet(client: httpx.AsyncClient, get_url: str, header=None):
                 return None
             else:
                 if itime > 2:
-                    logger.warning(f'服务器返回{response.status_code}，当前次数 {itime}')
+                    logger.warning(f'服务器返回{response.status_code}, 当前次数 {itime}')
         except Exception as e:
             logger.warning(f'请求错误: {type(e)}:{e}')
         await asyncio.sleep(0.5 * (itime + 1))
@@ -233,6 +233,7 @@ async def decodeDownloadUrls(files: list[PageInfo]) -> dict[str, str]:
             ext,
         )
         return url
+
     download_urls = {}
     for file in files:
         # 修改点 3: file['name'] -> file.name
@@ -311,11 +312,13 @@ async def downloadComic(comic: Comic, file: IO[bytes],
     # noinspection PyUnusedLocal
     async def _tqdm_callback(dl_url: str):
         pbar.update(1)
+
     if phase_callback is None:
         phase_callback = _tqdm_callback
     sem = asyncio.Semaphore(max_threads)
 
-    async def download_file(_sem: asyncio.Semaphore, client: httpx.AsyncClient, url_name: str, url: str) -> tuple[str, tempfile.SpooledTemporaryFile]:
+    async def download_file(_sem: asyncio.Semaphore, client: httpx.AsyncClient, url_name: str, url: str) -> tuple[
+        str, tempfile.SpooledTemporaryFile]:
         async with _sem:
             response = await robustGet(client, url, header=headers)
             f = tempfile.SpooledTemporaryFile(max_size=1024 ** 2)
@@ -332,8 +335,11 @@ async def downloadComic(comic: Comic, file: IO[bytes],
             http2=True  # 如果服务器支持 HTTP/2，速度会起飞 (可选，需安装 httpx[http2])
     ) as client_o:
         tasks = [download_file(sem, client_o, name, url) for name, url in file_urls.items()]
-        downloaded_files_data: list[tuple[str, tempfile.SpooledTemporaryFile]] = await asyncio.gather(*tasks)
-    downloaded_files_data.sort(key=lambda item: item[0])
+        downloaded_files_data = cast(
+            list[tuple[str, tempfile.SpooledTemporaryFile]],
+            cast(object, await asyncio.gather(*tasks))
+        )
+
 
     # 哈希级可复现构建, 勿修改任何打包流程
     with zipfile.ZipFile(file, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -466,7 +472,7 @@ async def get_ids_from_data(client: httpx.AsyncClient, offset: int, length: int)
 async def get_ids_from_nozomi(client: httpx.AsyncClient, subpath: str) -> set[int]:
     """解析 .nozomi 文件 (纯 ID 列表)"""
     logger.debug(f'对 {subpath} 发起 nozomi 请求')
-    url = f"nozomi/{subpath}.nozomi"
+    url = f"{subpath}.nozomi"
     # 请求头中需要设置正确的 Referer，否则可能 403
     headers = {'Referer': 'https://hitomi.la/'}
     resp = await robustGet(client, f"https://{domain}/{url}", header=headers)
@@ -494,9 +500,9 @@ async def search_single_term(client: httpx.AsyncClient, term: str) -> set[int]:
         if left in ['female', 'male']:
             return await get_ids_from_nozomi(client, f"tag/{left}-{right}-all")
         elif left == 'language':
-            return await get_ids_from_nozomi(client, f"index-{right}-all")
+            return await get_ids_from_nozomi(client, f"index-{right}")
         elif left in ['artist', 'character', 'series', 'group']:
-            return await get_ids_from_nozomi(client, f"{left}/{left}-{right}-all")
+            return await get_ids_from_nozomi(client, f"{left}/{right}-all")
         elif left == 'type':  # e.g. type:manga
             return await get_ids_from_nozomi(client, f"type/{right}-all")
     # 2. 普通文本搜索 (B-Tree)
@@ -620,6 +626,7 @@ async def cliSearch(search_string: str):
 
 if __name__ == '__main__':
     import argparse
+
     parser = argparse.ArgumentParser(description='Hitomi CLI')
     parser.add_argument('-p', '--proxy',
                         dest='proxy',
