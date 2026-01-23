@@ -176,10 +176,10 @@ class Comic(BaseModel):
     files: list[PageInfo]
     languages: list[Language]
     # 初始化可选
-    parodys: Optional[list[Parody]] = Field(default_factory=list)
-    tags: Optional[list[Tag]] = Field(default_factory=list)
-    characters: Optional[list[Character]] = Field(default_factory=list)
-    artists: Optional[list[Artist]] = Field(default_factory=list)
+    parodys: list[Parody] = Field(default_factory=list)
+    tags: list[Tag] = Field(default_factory=list)
+    characters: list[Character] = Field(default_factory=list)
+    artists: list[Artist] = Field(default_factory=list)
     # 可选字段 (Nullable)
     datepublished: Optional[str] = None
     related: Optional[list[int]] = None
@@ -189,6 +189,35 @@ class Comic(BaseModel):
     video: Optional[str] = None
     # 这里的 list[Any] 用于处理空列表或未知结构的列表
     scene_indexes: list[Any] = Field(default_factory=list)
+
+    @field_validator('parodys', mode='before')
+    @classmethod
+    def prevent_parodys_none(cls, v):
+        if v is None:
+            return []
+        return v
+
+    @field_validator('tags', mode='before')
+    @classmethod
+    def prevent_tags_none(cls, v):
+        if v is None:
+            return []
+        return v
+
+    @field_validator('characters', mode='before')
+    @classmethod
+    def prevent_characters_none(cls, v):
+        if v is None:
+            return []
+        return (v
+
+    @field_validator('artists', mode='before'))
+    @classmethod
+    def prevent_artists_none(cls, v):
+        if v is None:
+            return []
+        return v
+
 
     # 针对 id 的预处理验证器
     @field_validator('id', mode='before')
